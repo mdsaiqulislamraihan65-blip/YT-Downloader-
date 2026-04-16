@@ -2,7 +2,7 @@
 FROM node:18-alpine AS frontend
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN rm -f package-lock.json && npm install
 COPY . .
 RUN npm run build
 
@@ -22,10 +22,6 @@ COPY main.py .
 
 # Copy built frontend
 COPY --from=frontend /app/dist /app/static
-
-# Modify FastAPI to serve static files
-RUN pip install aiofiles
-RUN echo '\nfrom fastapi.staticfiles import StaticFiles\napp.mount("/", StaticFiles(directory="static", html=True), name="static")' >> main.py
 
 EXPOSE $PORT
 

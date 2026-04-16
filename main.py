@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yt_dlp
 import asyncio
@@ -86,6 +88,17 @@ def download_video(url: str, format_id: str):
                 return {"download_url": f['url']}
                 
     raise HTTPException(status_code=400, detail="Format not found")
+
+# Serve React static files if they exist
+if os.path.isdir("static"):
+    app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+    
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        filepath = os.path.join("static", full_path)
+        if os.path.exists(filepath) and os.path.isfile(filepath):
+            return FileResponse(filepath)
+        return FileResponse("static/index.html")
 
 if __name__ == "__main__":
     import uvicorn
