@@ -1,0 +1,6 @@
+{
+  "name": "YT Downloader Pro",
+  "description": "A beautiful YouTube video downloader with a Python backend, ready for Railway deployment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
