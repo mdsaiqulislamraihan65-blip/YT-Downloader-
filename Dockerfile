@@ -1,5 +1,5 @@
 # Build Frontend
-FROM node:18-alpine AS frontend
+FROM node:20-alpine AS frontend
 WORKDIR /app
 COPY package*.json ./
 RUN rm -f package-lock.json && npm install
