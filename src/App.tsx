@@ -85,10 +85,17 @@ export default function App() {
     setDownloadingFormat(format.format_id);
 
     // Because the backend sets Content-Disposition: attachment, 
-    // replacing the window location natively triggers the phone's Download Manager
+    // creating a hidden anchor tag with the download attribute triggers the phone's Download Manager
     // without actually leaving the website or opening a weird page! (Like Snaptube)
     const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
-    window.location.href = downloadUrl;
+    
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    // The download attribute is the absolute key to forcing standard browser downloads
+    a.download = `download_${format.resolution}.${format.ext}`; 
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 
     setTimeout(() => {
        setDownloadingFormat(null);
