@@ -10,6 +10,9 @@ import os
 import httpx
 from urllib.parse import quote
 from io import BytesIO
+import random
+import socket
+import struct
 
 app = FastAPI(title="YouTube Downloader API")
 
@@ -25,22 +28,43 @@ app.add_middleware(
 class VideoRequest(BaseModel):
     url: str
 
-def get_video_info(url: str):
-    ydl_opts = {
+def get_random_headers():
+    # Randomize User Agents so YouTube doesn't flag a single signature
+    agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
+    ]
+    
+    # Generate a random public IPv4 to inject as X-Forwarded-For
+    random_ip = socket.inet_ntoa(struct.pack('>I', random.randint(1, 0xffffffff)))
+    
+    return {
+        'User-Agent': random.choice(agents),
+        'X-Forwarded-For': random_ip,
+        'Client-IP': random_ip,
+        'Via': f'1.1 {random_ip}',
+    }
+
+def get_base_ydl_opts():
+    headers = get_random_headers()
+    return {
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': False,
         'noplaylist': True,
         'youtube_include_dash_manifest': False,
         'source_address': '0.0.0.0',
-        # Sometimes setting a generic header helps slightly with rate limits
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        },
+        'http_headers': headers,
         'extractor_args': {
             'youtube': ['client=android']
         }
     }
+
+def get_video_info(url: str):
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts['extract_flat'] = False
     
     # Enable cookie usage if the user uploaded cookies.txt to bypass YouTube bot protection
     if os.path.exists("cookies.txt"):
@@ -87,16 +111,7 @@ def fetch_info(req: VideoRequest):
 
 @app.get("/api/download")
 async def download_video(url: str, format_id: str):
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'noplaylist': True,
-        'youtube_include_dash_manifest': False, # Prefer direct progressive links
-        'source_address': '0.0.0.0', # Force IPv4 which sometimes helps with YouTube IP blocklists
-        'extractor_args': {
-            'youtube': ['client=android'] # Mask server as android bot
-        }
-    }
+    ydl_opts = get_base_ydl_opts()
     
     if os.path.exists("cookies.txt"):
         ydl_opts['cookiefile'] = "cookies.txt"
@@ -120,11 +135,14 @@ async def download_video(url: str, format_id: str):
                 safe_title = "Downloaded_Video"
             filename = f"{safe_title}.{ext}"
             
+            # Use random headers for proxying stream
+            stream_headers = get_random_headers()
+            
             # Stream directly using proxy to bypass IP blocks (403 Forbidden). 
             # We use a small 64KB chunk size to prevent memory overload on Railway.
             async def proxy_stream():
                 async with httpx.AsyncClient(timeout=None) as client:
-                    async with client.stream("GET", video_url, headers={"User-Agent": "Mozilla/5.0"}) as response:
+                    async with client.stream("GET", video_url, headers=stream_headers) as response:
                         if response.status_code != 200:
                             yield b"Error fetching stream. YouTube might be blocking the server."
                             return
