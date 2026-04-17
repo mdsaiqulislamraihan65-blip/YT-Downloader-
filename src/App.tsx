@@ -44,7 +44,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
-  const [isDemo, setIsDemo] = useState(false);
 
   const fetchInfo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,7 +52,6 @@ export default function App() {
     setLoading(true);
     setError(null);
     setVideoInfo(null);
-    setIsDemo(false);
 
     try {
       // Trying to hit the FastAPI backend
@@ -69,33 +67,12 @@ export default function App() {
          return;
       }
       
-      // If the backend isn't reachable or crashed (502, 500, Network Error)
-      // Check if we're actually in a local AI Studio preview vs production via hostname
-      const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname.includes('run.app');
-      
-      if (isLocalHost && err.message === 'Network Error') {
-         console.warn("Backend not available, using demo data for UI presentation.");
-         setIsDemo(true);
-         // Mock data for UI preview in AI Studio
-         setTimeout(() => {
-           setVideoInfo({
-             title: "Never Gonna Give You Up (Official Music Video)",
-             thumbnail: "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
-             duration: 212,
-             formats: [
-               { format_id: '1', ext: 'mp4', resolution: '1080p', filesize: 45000000, type: 'video' },
-               { format_id: '2', ext: 'mp4', resolution: '720p', filesize: 25000000, type: 'video' },
-               { format_id: '3', ext: 'mp4', resolution: '480p', filesize: 15000000, type: 'video' },
-               { format_id: '4', ext: 'm4a', resolution: 'Audio Only', filesize: 5000000, type: 'audio' },
-             ]
-           });
-           setLoading(false);
-         }, 1500);
-         return;
-      }
-      
-      // Must be a real server error like 502 Bad Gateway on Railway! Let's show it so they can fix.
-      const errorMsg = err.response?.status ? `Server returned Error Code ${err.response.status}: The backend might have crashed or Railway is restarting.` : (err.message || "Unknown Network Error connecting to backend.");
+      // For ALL other errors (Network Error, 502 Bad Gateway, 500 Internal Server Error)
+      // just display the raw error so we know EXACTLY what's wrong on Railway.
+      const errorMsg = err.response?.status 
+        ? `Server Error ${err.response.status}: Railway backend crashed or is restarting.` 
+        : `Network Error: ${err.message}. Backend might be offline.`;
+        
       setError(errorMsg);
       setLoading(false);
       return;
@@ -106,14 +83,6 @@ export default function App() {
 
   const handleDownload = async (format: VideoFormat) => {
     setDownloadingFormat(format.format_id);
-    
-    if (isDemo) {
-      setTimeout(() => {
-        alert("This is a demo preview! Deploy the provided Dockerfile to Railway to enable actual downloads with the Python backend.");
-        setDownloadingFormat(null);
-      }, 1000);
-      return;
-    }
 
     // Direct browser to the backend download endpoint to fetch the proxied stream.
     try {
@@ -237,19 +206,6 @@ export default function App() {
                   <strong className="text-yellow-500">Notice:</strong> YouTube blocks Cloud/VPS IP addresses (like Railway). To fix this on your live server, you need to configure <code className="bg-black/50 px-1 py-0.5 rounded text-yellow-300">yt-dlp</code> with cookies or an IP rotation.
                 </div>
               )}
-            </div>
-          </motion.div>
-        )}
-
-        {isDemo && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            className="bg-[#121212] border border-[#FF3D00]/20 text-[#FF3D00]/80 rounded-xl p-4 flex items-start gap-3 backdrop-blur-sm mx-auto max-w-2xl"
-          >
-            <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
-            <div className="text-sm">
-              <strong>Preview Mode Active.</strong> The Python FastAPI backend cannot run directly in the AI Studio preview environment. We are showing mock data. To use the real downloader, deploy the project to Railway using the included Dockerfile.
             </div>
           </motion.div>
         )}
