@@ -115,6 +115,55 @@ export default function App() {
     }
   };
 
+  const fetchWithFallback = async (targetUrl: string) => {
+    try {
+      // Step 1: Try our primary backend
+      const response = await axios.post('/api/info', { url: targetUrl });
+      return response.data;
+    } catch (err: any) {
+      console.warn("Primary backend blocked, trying Invidious fallback (User IP)...");
+      
+      // Step 2: Extract Video ID
+      const videoIdMatch = targetUrl.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/);
+      const videoId = videoIdMatch ? videoIdMatch[1] : null;
+      
+      if (!videoId) throw err;
+
+      // Step 3: Try a public Invidious API (This uses User's IP via Browser)
+      // This is the "100% Fix" strategy
+      const invidiousInstances = [
+        'https://invidious.snopyta.org',
+        'https://yewtu.be',
+        'https://vid.priv.au',
+        'https://iv.ggtyler.dev'
+      ];
+
+      for (const instance of invidiousInstances) {
+        try {
+          const invidRes = await axios.get(`${instance}/api/v1/videos/${videoId}`);
+          const data = invidRes.data;
+          
+          return {
+            title: data.title,
+            thumbnail: data.videoThumbnails?.find((t: any) => t.quality === 'maxres')?.url || data.videoThumbnails[0]?.url,
+            duration: data.lengthSeconds,
+            formats: data.adaptiveFormats.map((f: any) => ({
+              format_id: f.itag,
+              ext: f.container || 'mp4',
+              resolution: f.qualityLabel || `${f.bitrate}kbps`,
+              filesize: parseInt(f.contentLength) || 0,
+              type: f.type.includes('video') ? 'video' : 'audio',
+              direct_url: f.url
+            }))
+          };
+        } catch (fallbackErr) {
+          continue; // Try next instance
+        }
+      }
+      throw err; // If all fallbacks fail, throw original error
+    }
+  };
+
   const fetchInfo = async (targetUrl: string) => {
     setLoading(true);
     setError(null);
@@ -122,18 +171,13 @@ export default function App() {
     setSearchResults(null);
 
     try {
-      const response = await axios.post('/api/info', { url: targetUrl });
-      setVideoInfo(response.data);
+      const data = await fetchWithFallback(targetUrl);
+      setVideoInfo(data);
       await logSearch(targetUrl, 'url');
     } catch (err: any) {
       console.error(err);
-      if (err.response?.data?.detail) {
-         setError(err.response.data.detail);
-      } else {
-        setError(err.response?.status 
-          ? `Server Error ${err.response.status}: YouTube is blocking this lookup.` 
-          : `Network Error: ${err.message}`);
-      }
+      const details = err.response?.data?.detail || err.message;
+      setError(`Extraction Blocked: ${details}. Try again in a moment or use a different link.`);
     } finally {
       setLoading(false);
     }

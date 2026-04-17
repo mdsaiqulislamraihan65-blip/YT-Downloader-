@@ -22,11 +22,23 @@ load_dotenv()
 # Initialize Firebase Admin with smarter fallback
 def init_firebase():
     try:
+        # Check if already initialized
         if not firebase_admin._apps:
             firebase_admin.initialize_app()
         return firestore.client()
     except Exception as e:
-        print(f"Firebase Init Error: {e}")
+        print(f"Standard Firebase Init failed: {e}")
+        try:
+            # Fallback for environments with credentials in env var
+            import json
+            private_key = os.environ.get("FIREBASE_PRIVATE_KEY")
+            if private_key:
+                cred_dict = json.loads(private_key)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                return firestore.client()
+        except Exception as e2:
+            print(f"All Firebase Init attempts failed: {e2}")
     return None
 
 db = init_firebase()
@@ -155,8 +167,30 @@ def get_video_info(url: str):
     api_info = get_video_info_api(url)
     last_error = "Unknown error"
 
-    # Only try the user's manual proxy if it exists
+    # Try manual proxy first
     proxy_list = [manual_proxy] if manual_proxy else [None]
+
+    # Most resilient clients for data-center IPs
+    strategies = [
+        # Strategy 1: iOS Music (Commonly less restricted)
+        {
+            'player_client': 'ios_music',
+            'client_name': '26',
+            'use_embedded': False
+        },
+        # Strategy 2: Android Embedded
+        {
+            'player_client': 'android_embedded,android',
+            'client_name': '60',
+            'use_embedded': True
+        },
+        # Strategy 3: TV (Web-less)
+        {
+            'player_client': 'tv',
+            'client_name': '3',
+            'use_embedded': False
+        }
+    ]
 
     for proxy in proxy_list:
         for strategy in strategies:
@@ -170,7 +204,7 @@ def get_video_info(url: str):
                 'nocheckcertificate': True,
                 'geo_bypass': True,
                 'force_ipv4': True,
-                'socket_timeout': 30, # Increased timeout
+                'socket_timeout': 30,
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -184,7 +218,6 @@ def get_video_info(url: str):
                 }
             }
             
-            # Filter out empty strings
             ydl_opts['extractor_args']['youtube'] = [arg for arg in ydl_opts['extractor_args']['youtube'] if arg]
 
             if proxy:
