@@ -19,21 +19,20 @@ from firebase_admin import credentials, firestore
 
 load_dotenv()
 
-# Initialize Firebase Admin
-try:
-    firebase_admin.initialize_app()
-    db = firestore.client()
-except Exception as e:
-    print(f"Firebase Admin Init Error: {e}")
-    db = None
+# Initialize Firebase Admin with smarter fallback
+def init_firebase():
+    try:
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app()
+        return firestore.client()
+    except Exception as e:
+        print(f"Firebase Init Error: {e}")
+    return None
 
-PUBLIC_PROXIES = [
-    "http://144.202.112.214:80",
-    "http://192.111.135.18:18301",
-    "http://192.111.139.162:18301",
-    "http://192.111.139.163:18301",
-    "http://198.50.145.28:80",
-]
+db = init_firebase()
+
+# No hardcoded dead proxies - rely on manual proxy if provided
+PUBLIC_PROXIES = [] 
 
 app = FastAPI(title="YouTube Downloader API")
 
@@ -125,33 +124,39 @@ def get_video_info(url: str):
     config = get_config()
     manual_proxy = config.get("proxyUrl")
     
-    # Advanced strategies to bypass modern YouTube bot detection
+    # High-reliability strategies to bypass modern YouTube bot detection
     strategies = [
-        # Strategy 1: TV Focus (Often least restricted)
+        # Strategy 1: Android Embedded (Frequently bypasses bot detection)
+        {
+            'player_client': 'android_embedded,android',
+            'client_name': '60',
+            'use_embedded': True
+        },
+        # Strategy 2: iOS Client (Very reliable)
+        {
+            'player_client': 'ios',
+            'client_name': '5',
+            'use_embedded': False
+        },
+        # Strategy 3: TV Client (Highly bypasses bot detection)
         {
             'player_client': 'tv',
             'client_name': '3',
             'use_embedded': False
         },
-        # Strategy 2: iOS & Android (Mobile focus)
+        # Strategy 4: Web Embedded (Last resort fallback)
         {
-            'player_client': 'ios,android',
+            'player_client': 'web_embedded',
             'client_name': '1',
             'use_embedded': True
-        },
-        # Strategy 3: Android VR
-        {
-            'player_client': 'android_vr,ios',
-            'client_name': '10',
-            'use_embedded': True
-        },
+        }
     ]
 
     api_info = get_video_info_api(url)
     last_error = "Unknown error"
 
-    # Try manual proxy first, then fallback to public ones if needed
-    proxy_list = [manual_proxy] if manual_proxy else [None] + random.sample(PUBLIC_PROXIES, 2)
+    # Only try the user's manual proxy if it exists
+    proxy_list = [manual_proxy] if manual_proxy else [None]
 
     for proxy in proxy_list:
         for strategy in strategies:
@@ -165,6 +170,7 @@ def get_video_info(url: str):
                 'nocheckcertificate': True,
                 'geo_bypass': True,
                 'force_ipv4': True,
+                'socket_timeout': 30, # Increased timeout
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -178,6 +184,9 @@ def get_video_info(url: str):
                 }
             }
             
+            # Filter out empty strings
+            ydl_opts['extractor_args']['youtube'] = [arg for arg in ydl_opts['extractor_args']['youtube'] if arg]
+
             if proxy:
                 ydl_opts['proxy'] = proxy
 
@@ -195,7 +204,8 @@ def get_video_info(url: str):
                             'ext': f['ext'],
                             'resolution': f.get('resolution', 'N/A'),
                             'filesize': f.get('filesize', 0) or f.get('filesize_approx', 0),
-                            'type': 'video'
+                            'type': 'video',
+                            'direct_url': f.get('url') # Direct URL for browser-side bypass
                         })
                     elif f.get('vcodec') == 'none' and f.get('acodec') != 'none':
                         formats.append({
@@ -203,7 +213,8 @@ def get_video_info(url: str):
                             'ext': f['ext'],
                             'resolution': 'Audio Only',
                             'filesize': f.get('filesize', 0) or f.get('filesize_approx', 0),
-                            'type': 'audio'
+                            'type': 'audio',
+                            'direct_url': f.get('url') # Direct URL for browser-side bypass
                         })
                 
                 unique_formats = {f['resolution']: f for f in formats}.values()
@@ -269,11 +280,12 @@ async def download_video(url: str, format_id: str):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'force_ipv4': True,
+        'socket_timeout': 30,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         },
         'extractor_args': {
-            'youtube': ['player_client=ios,android,web', 'innertube_context_client_name=1']
+            'youtube': ['player_client=android_embedded,android', 'innertube_context_client_name=60']
         }
     }
     

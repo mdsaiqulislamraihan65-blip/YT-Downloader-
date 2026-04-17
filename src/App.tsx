@@ -14,6 +14,7 @@ interface VideoFormat {
   resolution: string;
   filesize: number;
   type: 'video' | 'audio';
+  direct_url?: string;
 }
 
 interface VideoInfo {
@@ -164,11 +165,18 @@ export default function App() {
     }
   };
 
-  const handleDownload = async (format: VideoFormat, targetUrl: string) => {
+  const handleDownload = async (format: VideoFormat, targetUrl: string, mode: 'server' | 'direct' = 'server') => {
     if (!user) {
       setError("Please login to download videos.");
       return;
     }
+
+    if (mode === 'direct' && format.direct_url) {
+      // Direct browser download bypass (User IP)
+      window.open(format.direct_url, '_blank', 'noreferrer');
+      return;
+    }
+
     setDownloadingFormat(format.format_id);
     const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&format_id=${format.format_id}`;
     
@@ -416,42 +424,60 @@ export default function App() {
                         transition={{ delay: idx * 0.05 }}
                         key={idx}
                         className={cn(
-                          "p-3 px-4 rounded-xl flex justify-between items-center transition-all cursor-pointer",
+                          "group/row p-4 rounded-2xl flex flex-col gap-3 transition-all",
                           downloadingFormat === format.format_id 
-                            ? "bg-[#FF3D00]/5 border border-[#FF3D00]" 
-                            : "bg-white/[0.03] border border-white/10 hover:bg-white/[0.06]"
+                            ? "bg-[#FF3D00]/10 border border-[#FF3D00]/40" 
+                            : "bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10"
                         )}
-                        onClick={() => handleDownload(format, url)}
                       >
-                        <div className="flex items-center gap-3">
-                          <div className={cn(
-                            "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border border-white/5",
-                            format.type === 'video' ? 'bg-white/5 text-white/80' : 'bg-white/5 text-white/80'
-                          )}>
-                            {format.type === 'video' ? <Video className="w-4 h-4" /> : <Music className="w-4 h-4" />}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-[14px]">{format.resolution}</div>
-                            <div className="text-[12px] text-white/60 mt-0.5">
-                              {format.ext.toUpperCase()} • {formatBytes(format.filesize)}
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-3">
+                            <div className={cn(
+                              "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-white/10 shadow-lg",
+                              format.type === 'video' ? 'bg-[#FF3D00]/10 text-[#FF3D00]' : 'bg-blue-500/10 text-blue-400'
+                            )}>
+                              {format.type === 'video' ? <Video className="w-5 h-4" /> : <Music className="w-5 h-4" />}
+                            </div>
+                            <div>
+                               <div className="font-bold text-[15px] tracking-tight">{format.resolution}</div>
+                               <div className="text-[12px] text-white/40 font-medium">
+                                 {format.ext.toUpperCase()} • {formatBytes(format.filesize)}
+                               </div>
                             </div>
                           </div>
+                          
+                          {downloadingFormat === format.format_id && (
+                             <div className="flex items-center gap-2 text-[12px] text-[#FF3D00] font-bold animate-pulse">
+                               <Loader2 className="w-3 h-3 animate-spin" />
+                               <span>FETCHING...</span>
+                             </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                           <button
+                             onClick={() => handleDownload(format, url, 'server')}
+                             disabled={!!downloadingFormat}
+                             className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[12px] font-bold transition-all active:scale-95 disabled:opacity-50"
+                           >
+                             <Search className="w-3.5 h-3.5" />
+                             <span>Standard</span>
+                           </button>
+                           <button
+                             onClick={() => handleDownload(format, url, 'direct')}
+                             disabled={!!downloadingFormat || !format.direct_url}
+                             className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF3D00]/80 hover:bg-[#FF3D00] text-white text-[12px] font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-[#FF3D00]/20"
+                           >
+                             <Download className="w-3.5 h-3.5" />
+                             <span>Local IP</span>
+                           </button>
                         </div>
                         
-                        <div
-                          className={cn(
-                            "w-10 h-10 rounded-lg flex items-center justify-center transition-colors disabled:opacity-50",
-                            downloadingFormat === format.format_id 
-                              ? "text-[#FF3D00]" 
-                              : "text-white/60 hover:text-white"
-                          )}
-                        >
-                          {downloadingFormat === format.format_id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Download className="w-4 h-4" />
-                          )}
-                        </div>
+                        {!format.direct_url && (
+                           <div className="text-[10px] text-center text-white/30 italic">
+                             * Local bypass unavailable for this format
+                           </div>
+                        )}
                       </motion.div>
                     ))}
                   </div>
