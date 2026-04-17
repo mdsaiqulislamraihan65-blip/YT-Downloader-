@@ -57,9 +57,16 @@ def get_base_ydl_opts():
         'youtube_include_dash_manifest': False,
         'source_address': '0.0.0.0',
         'http_headers': headers,
+        'nocheckcertificate': True,
+        'ignoreerrors': True,
+        'no_color': True,
+        'geo_bypass': True,
         'extractor_args': {
-            # Attempt to use Web Creator, iOS, or TV clients which sometimes have softer bot protections
-            'youtube': ['client=ios,tv,web_creator'] 
+            'youtube': {
+                'player_client': ['ios', 'android_music', 'web_creator'],
+                'player_skip': ['webpage', 'configs'],
+                'skip': ['hls', 'dash']
+            }
         }
     }
 
