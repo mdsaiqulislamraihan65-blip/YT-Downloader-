@@ -9,6 +9,7 @@ import asyncio
 import os
 import re
 import httpx
+import random
 from urllib.parse import quote
 from io import BytesIO
 from googleapiclient.discovery import build
@@ -25,6 +26,14 @@ try:
 except Exception as e:
     print(f"Firebase Admin Init Error: {e}")
     db = None
+
+PUBLIC_PROXIES = [
+    "http://144.202.112.214:80",
+    "http://192.111.135.18:18301",
+    "http://192.111.139.162:18301",
+    "http://192.111.139.163:18301",
+    "http://198.50.145.28:80",
+]
 
 app = FastAPI(title="YouTube Downloader API")
 
@@ -114,59 +123,69 @@ def get_video_info_api(url: str):
 
 def get_video_info(url: str):
     config = get_config()
-    proxy = config.get("proxyUrl")
+    manual_proxy = config.get("proxyUrl")
     
-    # Try multiple strategies to bypass bot detection
+    # Advanced strategies to bypass modern YouTube bot detection
     strategies = [
-        # Strategy 1: Modern Multi-Client (Default)
+        # Strategy 1: TV Focus (Often least restricted)
         {
-            'player_client': 'ios,android,web',
-            'client_name': '1'
+            'player_client': 'tv',
+            'client_name': '3',
+            'use_embedded': False
         },
-        # Strategy 2: Mobile Web Focus
+        # Strategy 2: iOS & Android (Mobile focus)
         {
-            'player_client': 'mweb,ios',
-            'client_name': '10'
+            'player_client': 'ios,android',
+            'client_name': '1',
+            'use_embedded': True
         },
-        # Strategy 3: TV Client (Often less bot detection)
+        # Strategy 3: Android VR
         {
-            'player_client': 'tv,web',
-            'client_name': '3'
-        }
+            'player_client': 'android_vr,ios',
+            'client_name': '10',
+            'use_embedded': True
+        },
     ]
 
     api_info = get_video_info_api(url)
     last_error = "Unknown error"
 
-    for strategy in strategies:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'noplaylist': True,
-            'youtube_include_dash_manifest': True,
-            'source_address': '0.0.0.0',
-            'nocheckcertificate': True,
-            'geo_bypass': True,
-            'force_ipv4': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            },
-            'extractor_args': {
-                'youtube': [
-                    f"player_client={strategy['player_client']}",
-                    f"innertube_context_client_name={strategy['client_name']}"
-                ]
+    # Try manual proxy first, then fallback to public ones if needed
+    proxy_list = [manual_proxy] if manual_proxy else [None] + random.sample(PUBLIC_PROXIES, 2)
+
+    for proxy in proxy_list:
+        for strategy in strategies:
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'noplaylist': True,
+                'youtube_include_dash_manifest': True,
+                'source_address': '0.0.0.0',
+                'nocheckcertificate': True,
+                'geo_bypass': True,
+                'force_ipv4': True,
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                },
+                'extractor_args': {
+                    'youtube': [
+                        f"player_client={strategy['player_client']}",
+                        f"innertube_context_client_name={strategy['client_name']}",
+                        "skip=dash,hls" if strategy.get('use_embedded') else ""
+                    ]
+                }
             }
-        }
-        
-        if proxy:
-            ydl_opts['proxy'] = proxy
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+            
+            if proxy:
+                ydl_opts['proxy'] = proxy
+
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    # Success...
+                # Success!
                 formats = []
                 
                 for f in info.get('formats', []):
@@ -195,12 +214,12 @@ def get_video_info(url: str):
                     "duration": info.get('duration'),
                     "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
                 }
-        except Exception as e:
-            last_error = str(e)
-            print(f"Strategy with {strategy['player_client']} failed: {e}")
-            continue # Try next strategy
+            except Exception as e:
+                last_error = str(e)
+                print(f"Strategy {strategy.get('player_client')} with proxy {proxy} failed: {e}")
+                continue # Try next strategy in the inner loop
 
-    # All strategies failed
+    # All strategies failed for all proxies
     if api_info:
          raise HTTPException(status_code=400, detail=f"Metadata fetched via API, but streaming links are blocked: {last_error}")
     raise HTTPException(status_code=400, detail=last_error)
