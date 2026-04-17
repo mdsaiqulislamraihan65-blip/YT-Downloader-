@@ -1,7 +1,7 @@
 fastapi
 uvicorn
-# Pull latest bleeding-edge yt-dlp from GitHub to bypass YouTube bot protections
-yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@master
+# Pull latest bleeding-edge yt-dlp via direct zip to avoid needing 'git' in the Docker container
+yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.zip
 pydantic
 aiofiles
 httpx
