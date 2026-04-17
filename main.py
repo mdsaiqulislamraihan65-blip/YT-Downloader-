@@ -58,7 +58,8 @@ def get_base_ydl_opts():
         'source_address': '0.0.0.0',
         'http_headers': headers,
         'extractor_args': {
-            'youtube': ['client=android']
+            # Attempt to use Web Creator, iOS, or TV clients which sometimes have softer bot protections
+            'youtube': ['client=ios,tv,web_creator'] 
         }
     }
 
