@@ -15,6 +15,14 @@ async function testConnection() {
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error("Firebase connection error: The client is offline or configuration is incorrect.");
+    } else {
+      // Catch permission errors specifically during boot
+      try {
+        handleFirestoreError(error, OperationType.GET, 'test/connection');
+      } catch (e) {
+        // Just log it during boot to avoid crashing the whole app silently
+        console.error("Boot connection test failed:", e);
+      }
     }
   }
 }
@@ -22,3 +30,54 @@ testConnection();
 
 export { signInWithPopup, signOut, onAuthStateChanged, setDoc, doc, collection, addDoc, serverTimestamp, getDocs, query, orderBy, limit, getDoc };
 export type { User };
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}

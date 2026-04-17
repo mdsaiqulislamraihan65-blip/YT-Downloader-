@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db, collection, getDocs, query, orderBy, limit, doc, getDoc, setDoc } from '../firebase';
+import { db, collection, getDocs, query, orderBy, limit, doc, getDoc, setDoc, handleFirestoreError, OperationType } from '../firebase';
 import { motion } from 'motion/react';
 import { Users, History, ArrowLeft, Loader2, Search, ExternalLink, Settings, ShieldCheck, Save, RefreshCw } from 'lucide-react';
 
@@ -33,35 +33,49 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
       setLoading(true);
       try {
         // Fetch Users
-        const usersSnapshot = await getDocs(collection(db, 'users'));
+        let usersSnapshot;
+        try {
+          usersSnapshot = await getDocs(collection(db, 'users'));
+        } catch (e) {
+          handleFirestoreError(e, OperationType.LIST, 'users');
+          return;
+        }
+        
         const usersList = usersSnapshot.docs.map(doc => doc.data() as UserData);
         setUsers(usersList);
 
         // Fetch Global Config
-        const configDoc = await getDoc(doc(db, 'config', 'youtube'));
-        if (configDoc.exists()) {
-          setYtApiKey(configDoc.data().apiKey || '');
+        try {
+          const configDoc = await getDoc(doc(db, 'config', 'youtube'));
+          if (configDoc.exists()) {
+            setYtApiKey(configDoc.data().apiKey || '');
+          }
+        } catch (e) {
+          handleFirestoreError(e, OperationType.GET, 'config/youtube');
         }
 
         // Fetch Recent Searches
-        // Note: This requires a collection group index or iterating users
-        // Since we want a robust panel, let's try to get searches for each user
         const allSearches: SearchEntry[] = [];
         for (const userDoc of usersSnapshot.docs) {
-          const searchesSnapshot = await getDocs(
-            query(collection(db, 'users', userDoc.id, 'searches'), orderBy('timestamp', 'desc'), limit(5))
-          );
-          searchesSnapshot.forEach(sDoc => {
-            allSearches.push({
-              userId: userDoc.id,
-              userEmail: userDoc.data().email,
-              ...sDoc.data()
-            } as SearchEntry);
-          });
+          try {
+            const searchesSnapshot = await getDocs(
+              query(collection(db, 'users', userDoc.id, 'searches'), orderBy('timestamp', 'desc'), limit(5))
+            );
+            searchesSnapshot.forEach(sDoc => {
+              allSearches.push({
+                userId: userDoc.id,
+                userEmail: userDoc.data().email,
+                ...sDoc.data()
+              } as SearchEntry);
+            });
+          } catch (e) {
+            // Log sub-collection error but don't break the whole panel
+            console.warn(`Could not fetch searches for user ${userDoc.id}:`, e);
+          }
         }
         setRecentSearches(allSearches.sort((a, b) => b.timestamp?.seconds - a.timestamp?.seconds).slice(0, 50));
       } catch (err) {
-        console.error("Admin fetch error:", err);
+        console.error("Critical Admin Panel Error:", err);
       } finally {
         setLoading(false);
       }
@@ -81,7 +95,7 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
       setSaveStatus('success');
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
-      console.error(err);
+      handleFirestoreError(err, OperationType.WRITE, 'config/youtube');
       setSaveStatus('error');
     } finally {
       setSavingSettings(false);
