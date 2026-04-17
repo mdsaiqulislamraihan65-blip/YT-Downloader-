@@ -81,7 +81,43 @@ def get_video_info(url: str):
                 "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
             }
         except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            yt_error = str(e)
+            
+            # Fallback to PyTubeFix which uses PO_TOKEN bypassing if yt-dlp fails!
+            try:
+                from pytubefix import YouTube
+                yt = YouTube(url, use_po_token=True)
+                formats = []
+                
+                for stream in yt.streams:
+                    if not stream.itag: continue
+                    is_video = stream.includes_video_track
+                    is_audio = stream.includes_audio_track
+                    
+                    # Only grab streams that are either combined (video+audio) or purely audio.
+                    if is_video and not is_audio:
+                        continue # Skip video-only streams without audio unless doing muxing
+                        
+                    res = stream.resolution if is_video else 'Audio Only'
+                    
+                    formats.append({
+                        'format_id': str(stream.itag),
+                        'ext': stream.subtype or 'mp4',
+                        'resolution': res,
+                        'filesize': stream.filesize_mb * 1024 * 1024 if hasattr(stream, 'filesize_mb') else 0,
+                        'type': 'video' if is_video else 'audio'
+                    })
+                    
+                unique_formats = {f['resolution']: f for f in formats}.values()
+                
+                return {
+                    "title": yt.title,
+                    "thumbnail": yt.thumbnail_url,
+                    "duration": yt.length,
+                    "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
+                }
+            except Exception as backup_e:
+                raise HTTPException(status_code=400, detail=f"YT-DLP Error: {yt_error} | PyTubeFix Fallback Error: {str(backup_e)}")
 
 @app.post("/api/info")
 def fetch_info(req: VideoRequest):
@@ -109,17 +145,29 @@ async def download_video(url: str, format_id: str):
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            target_format = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
-            
-            if not target_format:
-                raise HTTPException(status_code=400, detail="Format not found")
+            try:
+                info = ydl.extract_info(url, download=False)
+                target_format = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
+                if not target_format:
+                    raise Exception("Format not found in yt-dlp")
+                    
+                video_url = target_format['url']
+                ext = target_format.get('ext', 'mp4')
+                title = info.get('title', 'Video')
+                filesize = target_format.get('filesize') or target_format.get('filesize_approx')
+            except Exception as ydl_e:
+                # Fallback to PyTubeFix if yt-dlp is blocked
+                from pytubefix import YouTube
+                yt = YouTube(url, use_po_token=True)
+                stream = yt.streams.get_by_itag(int(format_id))
+                if not stream:
+                    raise Exception(f"YT-DLP Error: {str(ydl_e)} | PyTubeFix Error: Format not found")
                 
-            video_url = target_format['url']
-            ext = target_format.get('ext', 'mp4')
-            title = info.get('title', 'Video')
-            
+                video_url = stream.url
+                ext = stream.subtype or 'mp4'
+                title = yt.title or 'Video'
+                filesize = stream.filesize_mb * 1024 * 1024 if hasattr(stream, 'filesize_mb') else None
+                
             # Clean title for filename to avoid issues
             safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
             if not safe_title:
@@ -142,10 +190,8 @@ async def download_video(url: str, format_id: str):
                 'Content-Type': 'application/octet-stream',
             }
             
-            # Pass content length so the browser shows an active progress bar like Snaptube!
-            filesize = target_format.get('filesize') or target_format.get('filesize_approx')
             if filesize:
-                headers['Content-Length'] = str(filesize)
+                headers['Content-Length'] = str(int(filesize))
                 
             return StreamingResponse(proxy_stream(), headers=headers)
             
