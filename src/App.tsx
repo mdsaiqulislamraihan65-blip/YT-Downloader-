@@ -102,18 +102,22 @@ export default function App() {
       return;
     }
 
-    // Direct browser to the backend download endpoint to fetch the proxied stream.
-    // The backend uses 'Content-Disposition: attachment' to force a direct file 
-    // download prompt rather than playing the video in the browser or showing a raw URL.
+    // Direct browser to the backend download endpoint which returns a 302 Redirect.
     const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
     
-    // This will trigger the browser's download manager natively
-    window.location.href = downloadUrl;
+    // Create an invisible iframe. Mobile browsers will intercept the 302 
+    // inner redirect to a raw 'googlevideo.com' stream and trigger a download 
+    // manager prompt without leaving the current page tab!
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = downloadUrl;
+    document.body.appendChild(iframe);
     
-    // Reset state after a short delay since we leave the page virtually
+    // Cleanup the iframe and loading state
     setTimeout(() => {
+      document.body.removeChild(iframe);
       setDownloadingFormat(null);
-    }, 2000);
+    }, 3000);
   };
 
   return (
