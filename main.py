@@ -31,9 +31,14 @@ def get_video_info(url: str):
         'no_warnings': True,
         'extract_flat': False,
         'noplaylist': True,
+        'youtube_include_dash_manifest': False,
+        'source_address': '0.0.0.0',
         # Sometimes setting a generic header helps slightly with rate limits
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        },
+        'extractor_args': {
+            'youtube': ['client=android']
         }
     }
     
@@ -86,6 +91,11 @@ async def download_video(url: str, format_id: str):
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'youtube_include_dash_manifest': False, # Prefer direct progressive links
+        'source_address': '0.0.0.0', # Force IPv4 which sometimes helps with YouTube IP blocklists
+        'extractor_args': {
+            'youtube': ['client=android'] # Mask server as android bot
+        }
     }
     
     if os.path.exists("cookies.txt"):
@@ -101,9 +111,37 @@ async def download_video(url: str, format_id: str):
                 raise HTTPException(status_code=400, detail="Format not found")
                 
             video_url = target_format['url']
+            ext = target_format.get('ext', 'mp4')
+            title = info.get('title', 'Video')
             
-            # Return the raw URL as JSON. The frontend will render it in a popup modal player.
-            return {"download_url": video_url}
+            # Clean title for filename to avoid issues
+            safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+            if not safe_title:
+                safe_title = "Downloaded_Video"
+            filename = f"{safe_title}.{ext}"
+            
+            # Stream directly using proxy to bypass IP blocks (403 Forbidden). 
+            # We use a small 64KB chunk size to prevent memory overload on Railway.
+            async def proxy_stream():
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("GET", video_url, headers={"User-Agent": "Mozilla/5.0"}) as response:
+                        if response.status_code != 200:
+                            yield b"Error fetching stream. YouTube might be blocking the server."
+                            return
+                        async for chunk in response.aiter_bytes(chunk_size=65536):
+                            yield chunk
+                            
+            headers = {
+                'Content-Disposition': f'attachment; filename="{quote(filename)}"',
+                'Content-Type': 'application/octet-stream',
+            }
+            
+            # Pass content length so the browser shows an active progress bar like Snaptube!
+            filesize = target_format.get('filesize') or target_format.get('filesize_approx')
+            if filesize:
+                headers['Content-Length'] = str(filesize)
+                
+            return StreamingResponse(proxy_stream(), headers=headers)
             
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
