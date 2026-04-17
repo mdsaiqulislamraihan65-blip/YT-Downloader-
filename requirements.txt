@@ -1,6 +1,7 @@
 fastapi
 uvicorn
-yt-dlp
+# Pull latest bleeding-edge yt-dlp from GitHub to bypass YouTube bot protections
+yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@master
 pydantic
 aiofiles
 httpx
