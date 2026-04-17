@@ -71,6 +71,28 @@ class VideoRequest(BaseModel):
 class SearchRequest(BaseModel):
     query: str
 
+class CookieUpdate(BaseModel):
+    cookies: str
+
+@app.post("/api/settings/cookies")
+async def update_cookies(req: CookieUpdate):
+    try:
+        with open("cookies.txt", "w") as f:
+            f.write(req.cookies)
+        return {"status": "success", "message": "Cookies updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/settings/cookies")
+async def get_cookies():
+    try:
+        if os.path.exists("cookies.txt"):
+            with open("cookies.txt", "r") as f:
+                return {"cookies": f.read()}
+        return {"cookies": ""}
+    except Exception as e:
+        return {"cookies": ""}
+
 def get_video_id_from_url(url: str):
     import re
     # Simple regex to get video id
@@ -119,13 +141,13 @@ def get_video_info(url: str):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-us,en;q=0.5',
             'Sec-Fetch-Mode': 'navigate',
         },
         'extractor_args': {
-            'youtube': ['client=ios', 'player_client=ios']
+            'youtube': ['player_client=android_vr,ios,mweb,web', 'innertube_context_client_name=1']
         }
     }
     
@@ -215,10 +237,10 @@ async def download_video(url: str, format_id: str):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
         },
         'extractor_args': {
-            'youtube': ['client=ios', 'player_client=ios'] # Mask server as iOS mobile
+            'youtube': ['player_client=android_vr,ios,mweb,web', 'innertube_context_client_name=1']
         }
     }
     

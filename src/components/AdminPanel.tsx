@@ -25,8 +25,11 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'users' | 'history' | 'settings'>('users');
   const [ytApiKey, setYtApiKey] = useState('');
+  const [cookies, setCookies] = useState('');
+  const [savingCookies, setSavingCookies] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [cookieStatus, setCookieStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -52,6 +55,15 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
           }
         } catch (e) {
           handleFirestoreError(e, OperationType.GET, 'config/youtube');
+        }
+
+        // Fetch Cookies from API
+        try {
+          const res = await fetch('/api/settings/cookies');
+          const data = await res.json();
+          setCookies(data.cookies || '');
+        } catch (e) {
+          console.error("Error fetching cookies:", e);
         }
 
         // Fetch Recent Searches
@@ -99,6 +111,29 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
       setSaveStatus('error');
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleSaveCookies = async () => {
+    setSavingCookies(true);
+    setCookieStatus(null);
+    try {
+      const res = await fetch('/api/settings/cookies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookies }),
+      });
+      if (res.ok) {
+        setCookieStatus('success');
+        setTimeout(() => setCookieStatus(null), 3000);
+      } else {
+        setCookieStatus('error');
+      }
+    } catch (err) {
+      console.error(err);
+      setCookieStatus('error');
+    } finally {
+      setSavingCookies(false);
     }
   };
 
@@ -274,6 +309,56 @@ export default function AdminPanel({ onBack }: { onBack: () => void }) {
                 <li>The back-end automatically reloads configuration on each request.</li>
                 <li>Make sure to restrict your key in the Google Cloud Console to only YouTube Data API v3.</li>
               </ul>
+            </div>
+
+            <div className="pt-8 border-t border-white/5">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-500">
+                  <RefreshCw className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold">Bot Detection Bypass (Cookies)</h3>
+                  <p className="text-white/40 text-sm">Paste Netscape formatted cookies to bypass "Sign in to confirm you're not a bot"</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-white/60 pl-1">cookies.txt Content</label>
+                  <textarea 
+                    value={cookies}
+                    onChange={(e) => setCookies(e.target.value)}
+                    placeholder="# Netscape HTTP Cookie File..."
+                    className="w-full bg-white/[0.03] border border-white/10 rounded-xl h-48 p-4 text-white outline-none focus:border-blue-500/50 transition-all font-mono text-[12px] resize-none"
+                  />
+                  <p className="text-[11px] text-white/30 pl-1">
+                    Use a browser extension like "Get cookies.txt LOCALLY" to export your YouTube cookies.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <button 
+                    onClick={handleSaveCookies}
+                    disabled={savingCookies}
+                    className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold h-14 rounded-xl shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    {savingCookies ? (
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <Save className="w-5 h-5" />
+                        <span>Save Cookies</span>
+                      </>
+                    )}
+                  </button>
+                  {cookieStatus === 'success' && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-blue-400 font-bold text-sm">✓ Cookies Saved</motion.div>
+                  )}
+                  {cookieStatus === 'error' && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-red-500 font-bold text-sm">✗ Save Failed</motion.div>
+                  )}
+                </div>
+              </div>
             </div>
           </motion.div>
         )}
