@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -44,6 +44,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const autoFetched = useRef(false);
 
   // Core analysis function that can be called manually or automatically
   const performAnalysis = async (targetUrl: string) => {
@@ -77,14 +78,36 @@ export default function App() {
     performAnalysis(url);
   };
 
-  // Run once on load to catch auto-URLs from window.location
+  // Run once on load to catch auto-URLs from window.location robustly
   useEffect(() => {
-    // If user accesses site via: website.com/https://youtube.com/watch?v=...
-    // The pathname will be "/https://youtube.com/watch" and search will be "?v=..."
-    const initialUrl = (window.location.pathname.slice(1) + window.location.search).trim();
+    if (autoFetched.current) return;
     
-    if (initialUrl.startsWith('http') && (initialUrl.includes('youtube.com') || initialUrl.includes('youtu.be'))) {
-       performAnalysis(initialUrl);
+    // Extract anything after the website's root URL
+    const href = window.location.href;
+    const pathAndSearch = href.replace(window.location.origin, "");
+    
+    // Look for the "http" keyword anywhere in the path
+    const httpIndex = pathAndSearch.indexOf("http");
+    
+    if (httpIndex !== -1) {
+      // Decode it to handle things like %3F properly
+      let extractedUrl = decodeURIComponent(pathAndSearch.substring(httpIndex));
+      
+      // Browsers often "correct" // into / when it is in the URL pathname!
+      // This turns https://youtu.be into https:/youtu.be and breaks the parser.
+      if (extractedUrl.startsWith("https:/") && !extractedUrl.startsWith("https://")) {
+          extractedUrl = extractedUrl.replace("https:/", "https://");
+      } else if (extractedUrl.startsWith("http:/") && !extractedUrl.startsWith("http://")) {
+          extractedUrl = extractedUrl.replace("http:/", "http://");
+      }
+
+      // If it looks like a valid YouTube URL, analyze it instantly!
+      if (extractedUrl.includes("youtu")) {
+          autoFetched.current = true;
+          performAnalysis(extractedUrl);
+          // Optional: clear the URL bar cosmetically without reloading
+          window.history.replaceState({}, '', '/');
+      }
     }
   }, []);
 
