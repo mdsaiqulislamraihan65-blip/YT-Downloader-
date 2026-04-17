@@ -82,9 +82,10 @@ def fetch_info(req: VideoRequest):
 
 @app.get("/api/download")
 async def download_video(url: str, format_id: str):
-    # Instead of proxying a massive stream which can crash Railway's tight memory limits 
-    # and fail midway, we will return the absolute direct googlevideo URL to the client JSON.
-    # The frontend will trigger the download safely.
+    # Streaming the video through the FastAPI server proxy is MANDATORY for mobile.
+    # YouTube ties the download URL to the IP address of the machine that requested it.
+    # If the Railway server requests the URL, and we send it to the mobile phone,
+    # the mobile phone has a different IP and gets a 403 FORBIDDEN error.
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -96,7 +97,6 @@ async def download_video(url: str, format_id: str):
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # We don't download, we extract the direct URL to googlevideo.
             info = ydl.extract_info(url, download=False)
             
             target_format = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
@@ -105,9 +105,32 @@ async def download_video(url: str, format_id: str):
                 raise HTTPException(status_code=400, detail="Format not found")
                 
             video_url = target_format['url']
+            ext = target_format.get('ext', 'mp4')
+            title = info.get('title', 'Video')
             
-            # Return the direct URL so frontend can create the download link
-            return {"download_url": video_url}
+            # Clean title for filename to avoid issues
+            safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+            if not safe_title:
+                safe_title = "Downloaded_Video"
+            filename = f"{safe_title}.{ext}"
+
+            # We cleanly proxy the stream from YouTube to the client
+            # This consumes server bandwidth but bypasses YouTube's IP lock limit entirely!
+            async def proxy_stream():
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("GET", video_url, headers={"User-Agent": "Mozilla/5.0"}) as response:
+                        if response.status_code != 200:
+                            yield b"Error fetching stream"
+                            return
+                        async for chunk in response.aiter_bytes(chunk_size=2048 * 2048): # Larger chunk size
+                            yield chunk
+                            
+            headers = {
+                'Content-Disposition': f'attachment; filename="{quote(filename)}"',
+                'Content-Type': 'application/octet-stream'
+            }
+            
+            return StreamingResponse(proxy_stream(), headers=headers, media_type="application/octet-stream")
             
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

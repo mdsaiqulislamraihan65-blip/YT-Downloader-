@@ -84,47 +84,14 @@ export default function App() {
   const handleDownload = async (format: VideoFormat) => {
     setDownloadingFormat(format.format_id);
 
-    // Direct browser to the backend download endpoint to fetch the proxied stream.
-    try {
-      const response = await axios.get(`/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`, {
-        // We do cross-origin request but without following redirects natively if possible!
-        // Actually axios will follow redirects so we will get the final url.
-        maxRedirects: 0,
-        validateStatus: function (status) {
-          return status >= 200 && status < 400; // default
-        }
-      });
-      
-      const targetUrl = response.data.download_url || response.request?.responseURL;
+    // Direct browser directly to the backend download endpoint to fetch the proxied stream.
+    // The server returns it as a Content-Disposition attachment so the phone downloads it safely.
+    const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
+    window.location.href = downloadUrl;
 
-      if (targetUrl) {
-        // Mobile browsers handle fetch-blob downloads perfectly and save identically to local files.
-        // It bypasses the built-in media player completely.
-        const a = document.createElement('a');
-        // If it's a direct googlevideo URL, appending 'dl=1' or 'title' can sometimes coerce it, 
-        // but HTML5 download attribute is the best weapon.
-        a.href = targetUrl;
-        a.target = "_blank";
-        a.download = `video_${format.resolution}.${format.ext}`; 
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      } else {
-        // Fallback to invisible iframe if we can't extract the direct URL gracefully
-        const iframe = document.createElement('iframe');
-        iframe.style.display = 'none';
-        iframe.src = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
-        document.body.appendChild(iframe);
-        setTimeout(() => document.body.removeChild(iframe), 3000);
-      }
-
-    } catch (err: any) {
-      console.error(err);
-      const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
-      window.location.href = downloadUrl;
-    } finally {
-      setTimeout(() => setDownloadingFormat(null), 2000);
-    }
+    setTimeout(() => {
+      setDownloadingFormat(null);
+    }, 2000);
   };
 
   return (
