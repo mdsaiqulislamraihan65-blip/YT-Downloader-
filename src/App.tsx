@@ -115,52 +115,64 @@ export default function App() {
     }
   };
 
+  const fetchClientSideSource = async (videoId: string) => {
+    // A robust list of public instances that support CORS and API v1
+    const publicAPIs = [
+      'https://invidious.snopyta.org',
+      'https://yewtu.be',
+      'https://vid.priv.au',
+      'https://iv.ggtyler.dev',
+      'https://inv.vern.cc',
+      'https://invidious.lunar.icu'
+    ];
+
+    for (const instance of publicAPIs) {
+      try {
+        console.log(`Trying extraction via ${instance}...`);
+        const invidRes = await axios.get(`${instance}/api/v1/videos/${videoId}`, { timeout: 8000 });
+        const data = invidRes.data;
+        
+        if (!data || !data.adaptiveFormats) continue;
+
+        return {
+          title: data.title,
+          thumbnail: data.videoThumbnails?.find((t: any) => t.quality === 'maxres')?.url || data.videoThumbnails[0]?.url,
+          duration: data.lengthSeconds,
+          formats: data.adaptiveFormats.map((f: any) => ({
+            format_id: f.itag,
+            ext: f.container || 'mp4',
+            resolution: f.qualityLabel || (f.type.includes('audio') ? 'Audio Only' : 'Unknown'),
+            filesize: parseInt(f.contentLength) || 0,
+            type: f.type.includes('video') ? 'video' : 'audio',
+            direct_url: f.url
+          }))
+        };
+      } catch (fallbackErr) {
+        console.error(`Invidious instance ${instance} failed:`, fallbackErr);
+        continue;
+      }
+    }
+    return null;
+  };
+
   const fetchWithFallback = async (targetUrl: string) => {
+    const videoIdMatch = targetUrl.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/);
+    const videoId = videoIdMatch ? videoIdMatch[1] : null;
+
+    if (!videoId) throw new Error("Invalid YouTube URL - Video ID not found.");
+
+    // Strategy: Try Client-Side (User IP) extraction FIRST for 100% bypass
+    console.log("Attempting User-IP extraction first...");
+    const clientData = await fetchClientSideSource(videoId);
+    if (clientData) return clientData;
+
+    // Fallback to Server-Side only if client-side fails
+    console.warn("User-IP extraction failed, falling back to server...");
     try {
-      // Step 1: Try our primary backend
       const response = await axios.post('/api/info', { url: targetUrl });
       return response.data;
     } catch (err: any) {
-      console.warn("Primary backend blocked, trying Invidious fallback (User IP)...");
-      
-      // Step 2: Extract Video ID
-      const videoIdMatch = targetUrl.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/);
-      const videoId = videoIdMatch ? videoIdMatch[1] : null;
-      
-      if (!videoId) throw err;
-
-      // Step 3: Try a public Invidious API (This uses User's IP via Browser)
-      // This is the "100% Fix" strategy
-      const invidiousInstances = [
-        'https://invidious.snopyta.org',
-        'https://yewtu.be',
-        'https://vid.priv.au',
-        'https://iv.ggtyler.dev'
-      ];
-
-      for (const instance of invidiousInstances) {
-        try {
-          const invidRes = await axios.get(`${instance}/api/v1/videos/${videoId}`);
-          const data = invidRes.data;
-          
-          return {
-            title: data.title,
-            thumbnail: data.videoThumbnails?.find((t: any) => t.quality === 'maxres')?.url || data.videoThumbnails[0]?.url,
-            duration: data.lengthSeconds,
-            formats: data.adaptiveFormats.map((f: any) => ({
-              format_id: f.itag,
-              ext: f.container || 'mp4',
-              resolution: f.qualityLabel || `${f.bitrate}kbps`,
-              filesize: parseInt(f.contentLength) || 0,
-              type: f.type.includes('video') ? 'video' : 'audio',
-              direct_url: f.url
-            }))
-          };
-        } catch (fallbackErr) {
-          continue; // Try next instance
-        }
-      }
-      throw err; // If all fallbacks fail, throw original error
+      throw new Error(err.response?.data?.detail || "All extraction methods blocked. Try a different video or wait a moment.");
     }
   };
 
@@ -498,23 +510,16 @@ export default function App() {
                           )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2">
-                           <button
-                             onClick={() => handleDownload(format, url, 'server')}
-                             disabled={!!downloadingFormat}
-                             className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[12px] font-bold transition-all active:scale-95 disabled:opacity-50"
-                           >
-                             <Search className="w-3.5 h-3.5" />
-                             <span>Standard</span>
-                           </button>
+                        <div className="grid grid-cols-1 gap-2">
                            <button
                              onClick={() => handleDownload(format, url, 'direct')}
                              disabled={!!downloadingFormat || !format.direct_url}
-                             className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF3D00]/80 hover:bg-[#FF3D00] text-white text-[12px] font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-[#FF3D00]/20"
+                             className="flex items-center justify-center gap-2 py-3 rounded-xl bg-[#FF3D00] hover:bg-[#FF3D00]/90 text-white text-[14px] font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-[#FF3D00]/20"
                            >
-                             <Download className="w-3.5 h-3.5" />
-                             <span>Local IP</span>
+                             <Download className="w-4 h-4" />
+                             <span>Download (User IP)</span>
                            </button>
+                           {/* Server mode hidden for 100% bypass focus */}
                         </div>
                         
                         {!format.direct_url && (
