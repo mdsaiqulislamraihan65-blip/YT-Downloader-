@@ -33,12 +33,14 @@ def get_video_info(url: str):
         'noplaylist': True,
         'youtube_include_dash_manifest': False,
         'source_address': '0.0.0.0',
-        # Sometimes setting a generic header helps slightly with rate limits
+        'geo_bypass': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
         },
         'extractor_args': {
-            'youtube': ['client=android']
+            'youtube': ['player_skip=webpage,configs', 'client=ios,tv,android']
         }
     }
     
@@ -93,8 +95,12 @@ async def download_video(url: str, format_id: str):
         'noplaylist': True,
         'youtube_include_dash_manifest': False, # Prefer direct progressive links
         'source_address': '0.0.0.0', # Force IPv4 which sometimes helps with YouTube IP blocklists
+        'geo_bypass': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+        },
         'extractor_args': {
-            'youtube': ['client=android'] # Mask server as android bot
+            'youtube': ['player_skip=webpage,configs', 'client=ios,tv,android'] # Mask server completely to avoid bot pages
         }
     }
     
