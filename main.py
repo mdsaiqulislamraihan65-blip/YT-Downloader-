@@ -54,18 +54,14 @@ def get_base_ydl_opts():
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'youtube_include_dash_manifest': False,
-        'source_address': '0.0.0.0',
+        'source_address': '0.0.0.0', # Force IPv4 which is better for bypassing blocks
         'http_headers': headers,
         'nocheckcertificate': True,
-        'ignoreerrors': True,
-        'no_color': True,
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android_music', 'web_creator'],
-                'player_skip': ['webpage', 'configs'],
-                'skip': ['hls', 'dash']
+                'player_client': ['ios', 'web', 'mweb'], # Specific order
+                'player_skip': ['configs', 'webpage']
             }
         }
     }
@@ -74,16 +70,23 @@ def get_video_info(url: str):
     ydl_opts = get_base_ydl_opts()
     ydl_opts['extract_flat'] = False
     
-    # Enable cookie usage if the user uploaded cookies.txt to bypass YouTube bot protection
+    # Enable cookie usage if the user uploaded cookies.txt
     if os.path.exists("cookies.txt"):
         ydl_opts['cookiefile'] = "cookies.txt"
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
+            if not info:
+                raise HTTPException(status_code=400, detail="YouTube returned no data. Bot detection active.")
+                
             formats = []
-            
-            for f in info.get('formats', []):
+            info_formats = info.get('formats', [])
+            if not info_formats:
+                 # Fallback if formats list is empty
+                 raise HTTPException(status_code=400, detail="No downloadable formats found for this video. YouTube may be blocking this server's IP.")
+
+            for f in info_formats:
                 if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
                     formats.append({
                         'format_id': f['format_id'],
@@ -111,7 +114,10 @@ def get_video_info(url: str):
                 "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
             }
         except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            error_str = str(e)
+            if "confirm you're not a bot" in error_str:
+                raise HTTPException(status_code=400, detail="YouTube Bot Block: Cookies might be expired or the server IP is blacklisted. Try refreshing cookies.")
+            raise HTTPException(status_code=400, detail=error_str)
 
 @app.post("/api/info")
 def fetch_info(req: VideoRequest):
