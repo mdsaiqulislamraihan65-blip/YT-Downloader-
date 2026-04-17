@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle, LogIn, LogOut, History, User as UserIcon } from 'lucide-react';
+import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle, LogIn, LogOut, History, User as UserIcon, ArrowLeft } from 'lucide-react';
 import { cn } from './lib/utils';
 import axios from 'axios';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User, setDoc, doc, collection, addDoc, serverTimestamp } from './firebase';
+import AdminPanel from './components/AdminPanel';
+
+const ADMIN_EMAIL = "mdsaiqulislamr@gmail.com";
 
 interface VideoFormat {
   format_id: string;
@@ -55,11 +58,15 @@ export default function App() {
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setAuthReady(true);
+      setIsAdmin(currentUser?.email === ADMIN_EMAIL);
+      
       if (currentUser) {
         // Sync user profile to Firestore
         await setDoc(doc(db, 'users', currentUser.uid), {
@@ -189,7 +196,16 @@ export default function App() {
     <div className="min-h-screen bg-[#050505] text-white flex flex-col items-center py-12 px-4 font-sans selection:bg-[#FF3D00]/30 relative overflow-hidden">
       
       {/* Auth Bar */}
-      <div className="absolute top-6 right-6 z-50">
+      <div className="absolute top-6 right-6 z-50 flex gap-3 items-center">
+        {isAdmin && (
+          <button 
+            onClick={() => setShowAdmin(!showAdmin)}
+            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold py-2 px-4 rounded-full transition-all"
+          >
+            {showAdmin ? <ArrowLeft className="w-4 h-4" /> : <History className="w-4 h-4" />}
+            <span>{showAdmin ? 'Back' : 'Admin'}</span>
+          </button>
+        )}
         {user ? (
           <div className="flex items-center gap-4 bg-[#121212] border border-white/10 p-2 pl-4 rounded-full shadow-lg backdrop-blur-md">
             <span className="text-sm font-medium text-white/80 hidden sm:inline">Hello, {user.displayName?.split(' ')[0]}</span>
@@ -228,8 +244,12 @@ export default function App() {
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-4xl z-10 space-y-10"
       >
-        {/* Header */}
-        <div className="text-center space-y-4 pt-12">
+        {showAdmin ? (
+          <AdminPanel onBack={() => setShowAdmin(false)} />
+        ) : (
+          <>
+            {/* Header */}
+            <div className="text-center space-y-4 pt-12">
           <motion.div 
             initial={{ scale: 0.9 }}
             animate={{ scale: 1 }}
@@ -442,6 +462,8 @@ export default function App() {
           )}
         </AnimatePresence>
 
+          </>
+        )}
       </motion.div>
     </div>
   );

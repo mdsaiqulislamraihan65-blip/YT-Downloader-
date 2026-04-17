@@ -7,23 +7,54 @@ from pydantic import BaseModel
 import yt_dlp
 import asyncio
 import os
+import re
 import httpx
 from urllib.parse import quote
 from io import BytesIO
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 load_dotenv()
+
+# Initialize Firebase Admin
+try:
+    firebase_admin.initialize_app()
+    db = firestore.client()
+except Exception as e:
+    print(f"Firebase Admin Init Error: {e}")
+    db = None
 
 app = FastAPI(title="YouTube Downloader API")
 
 # Initialize YouTube API client
-YOUTUBE_API_KEY = "AIzaSyCaMalgnfJQT6ByPWRBRLmbJaW2TFdMwQo"
-youtube_client = None
-try:
-    youtube_client = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-except Exception as e:
-    print(f"Error initializing YouTube client: {e}")
+DEFAULT_KEY = "AIzaSyCaMalgnfJQT6ByPWRBRLmbJaW2TFdMwQo"
+YOUTUBE_API_KEY = DEFAULT_KEY
+
+def get_youtube_client():
+    global YOUTUBE_API_KEY
+    current_key = YOUTUBE_API_KEY
+    
+    # Try to get updated key from Firestore
+    if db:
+        try:
+            doc = db.collection("config").document("youtube").get()
+            if doc.exists:
+                data = doc.to_dict()
+                if data.get("apiKey"):
+                    current_key = data["apiKey"]
+        except Exception as e:
+            print(f"Error fetching key from Firestore: {e}")
+            
+    try:
+        return build("youtube", "v3", developerKey=current_key)
+    except Exception as e:
+        print(f"Error initializing YouTube client: {e}")
+        # Fallback to default if current fails
+        return build("youtube", "v3", developerKey=DEFAULT_KEY)
+
+youtube_client = get_youtube_client()
 
 # Setup CORS for frontend to communicate
 app.add_middleware(
@@ -49,11 +80,12 @@ def get_video_id_from_url(url: str):
 
 def get_video_info_api(url: str):
     video_id = get_video_id_from_url(url)
-    if not youtube_client or not video_id:
+    client = get_youtube_client()
+    if not client or not video_id:
         return None
     
     try:
-        request = youtube_client.videos().list(
+        request = client.videos().list(
             part="snippet,contentDetails",
             id=video_id
         )
@@ -142,11 +174,12 @@ def fetch_info(req: VideoRequest):
 
 @app.post("/api/search")
 def search_videos(req: SearchRequest):
-    if not youtube_client:
-        raise HTTPException(status_code=400, detail="YouTube API Key not configured. Please add YOUTUBE_API_KEY to environment.")
+    client = get_youtube_client()
+    if not client:
+        raise HTTPException(status_code=400, detail="YouTube API Key not configured.")
     
     try:
-        request = youtube_client.search().list(
+        request = client.search().list(
             part="snippet",
             maxResults=10,
             q=req.query,

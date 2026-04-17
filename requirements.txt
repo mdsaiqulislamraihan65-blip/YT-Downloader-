@@ -6,3 +6,4 @@ aiofiles
 httpx
 google-api-python-client
 python-dotenv
+firebase-admin
