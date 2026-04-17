@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { cn } from './lib/utils';
 import axios from 'axios';
 
@@ -44,6 +44,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const [modalUrl, setModalUrl] = useState<string | null>(null);
+  const [modalFormat, setModalFormat] = useState<VideoFormat | null>(null);
 
   const fetchInfo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,14 +86,18 @@ export default function App() {
   const handleDownload = async (format: VideoFormat) => {
     setDownloadingFormat(format.format_id);
 
-    // Direct browser directly to the backend download endpoint to fetch the proxied stream.
-    // The server returns it as a Content-Disposition attachment so the phone downloads it safely.
-    const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
-    window.location.href = downloadUrl;
-
-    setTimeout(() => {
-      setDownloadingFormat(null);
-    }, 2000);
+    try {
+       const response = await axios.get(`/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`);
+       if (response.data.download_url) {
+           setModalUrl(response.data.download_url);
+           setModalFormat(format);
+       }
+    } catch (err: any) {
+       console.error(err);
+       setError("Error generating direct link. Railway backend might be offline.");
+    } finally {
+       setDownloadingFormat(null);
+    }
   };
 
   return (
@@ -269,6 +275,70 @@ export default function App() {
                 </div>
               </div>
 
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Video Player Modal */}
+        <AnimatePresence>
+          {modalUrl && modalFormat && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-3xl overflow-hidden flex flex-col shadow-[0_0_50px_rgba(255,61,0,0.1)]"
+              >
+                <div className="p-4 border-b border-white/5 flex justify-between items-center bg-black/40">
+                  <h3 className="font-semibold text-lg flex items-center gap-2">
+                    {modalFormat.type === 'video' ? <Video className="w-5 h-5 text-[#FF3D00]" /> : <Music className="w-5 h-5 text-[#FF3D00]" />}
+                    {modalFormat.resolution} Quality
+                  </h3>
+                  <button 
+                    onClick={() => {
+                        setModalUrl(null);
+                        setModalFormat(null);
+                    }} 
+                    className="text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg w-8 h-8 flex items-center justify-center transition-colors"
+                  >
+                     <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                <div className="bg-black/60 aspect-video w-full flex items-center justify-center relative">
+                   {modalFormat.type === 'video' ? (
+                      <video src={modalUrl} controls autoPlay className="w-full h-full object-contain outline-none" />
+                   ) : (
+                      <audio src={modalUrl} controls autoPlay className="w-full mx-8" />
+                   )}
+                </div>
+
+                <div className="p-5 flex flex-col sm:flex-row gap-4 justify-between items-center bg-black/40">
+                   <p className="text-white/50 text-sm">
+                      Video playing directly from YouTube. If it freezes, click download.
+                   </p>
+                   <button 
+                     onClick={() => {
+                        const a = document.createElement('a');
+                        a.href = modalUrl;
+                        a.target = "_blank";
+                        a.download = `video_${modalFormat.resolution}.${modalFormat.ext}`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                     }}
+                     className="bg-[#FF3D00] hover:bg-[#FF3D00]/90 text-white font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 transition-all w-full sm:w-auto"
+                   >
+                     <Download className="w-5 h-5" />
+                     Save to Device
+                   </button>
+                </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
