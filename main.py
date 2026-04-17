@@ -18,13 +18,12 @@ load_dotenv()
 app = FastAPI(title="YouTube Downloader API")
 
 # Initialize YouTube API client
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+YOUTUBE_API_KEY = "AIzaSyCaMalgnfJQT6ByPWRBRLmbJaW2TFdMwQo"
 youtube_client = None
-if YOUTUBE_API_KEY:
-    try:
-        youtube_client = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-    except Exception as e:
-        print(f"Error initializing YouTube client: {e}")
+try:
+    youtube_client = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+except Exception as e:
+    print(f"Error initializing YouTube client: {e}")
 
 # Setup CORS for frontend to communicate
 app.add_middleware(
