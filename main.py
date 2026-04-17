@@ -116,11 +116,16 @@ def get_video_info(url: str):
         'noplaylist': True,
         'youtube_include_dash_manifest': False,
         'source_address': '0.0.0.0',
+        'nocheckcertificate': True,
+        'geo_bypass': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
         },
         'extractor_args': {
-            'youtube': ['client=android']
+            'youtube': ['client=ios', 'player_client=ios']
         }
     }
     
@@ -207,8 +212,13 @@ async def download_video(url: str, format_id: str):
         'noplaylist': True,
         'youtube_include_dash_manifest': False, # Prefer direct progressive links
         'source_address': '0.0.0.0', # Force IPv4 which sometimes helps with YouTube IP blocklists
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+        },
         'extractor_args': {
-            'youtube': ['client=android'] # Mask server as android bot
+            'youtube': ['client=ios', 'player_client=ios'] # Mask server as iOS mobile
         }
     }
     
