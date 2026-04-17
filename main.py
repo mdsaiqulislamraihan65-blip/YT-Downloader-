@@ -32,26 +32,27 @@ app = FastAPI(title="YouTube Downloader API")
 DEFAULT_KEY = "AIzaSyCaMalgnfJQT6ByPWRBRLmbJaW2TFdMwQo"
 YOUTUBE_API_KEY = DEFAULT_KEY
 
+def get_config():
+    """Fetch configuration from Firestore."""
+    if not db:
+        return {}
+    try:
+        doc = db.collection("config").document("youtube").get()
+        if doc.exists:
+            return doc.to_dict()
+    except Exception as e:
+        print(f"Error fetching config: {e}")
+    return {}
+
 def get_youtube_client():
     global YOUTUBE_API_KEY
-    current_key = YOUTUBE_API_KEY
+    config = get_config()
+    current_key = config.get("apiKey") or YOUTUBE_API_KEY
     
-    # Try to get updated key from Firestore
-    if db:
-        try:
-            doc = db.collection("config").document("youtube").get()
-            if doc.exists:
-                data = doc.to_dict()
-                if data.get("apiKey"):
-                    current_key = data["apiKey"]
-        except Exception as e:
-            print(f"Error fetching key from Firestore: {e}")
-            
     try:
         return build("youtube", "v3", developerKey=current_key)
     except Exception as e:
         print(f"Error initializing YouTube client: {e}")
-        # Fallback to default if current fails
         return build("youtube", "v3", developerKey=DEFAULT_KEY)
 
 youtube_client = get_youtube_client()
@@ -65,33 +66,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Constants
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 class VideoRequest(BaseModel):
     url: str
 
 class SearchRequest(BaseModel):
     query: str
-
-class CookieUpdate(BaseModel):
-    cookies: str
-
-@app.post("/api/settings/cookies")
-async def update_cookies(req: CookieUpdate):
-    try:
-        with open("cookies.txt", "w") as f:
-            f.write(req.cookies)
-        return {"status": "success", "message": "Cookies updated successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/settings/cookies")
-async def get_cookies():
-    try:
-        if os.path.exists("cookies.txt"):
-            with open("cookies.txt", "r") as f:
-                return {"cookies": f.read()}
-        return {"cookies": ""}
-    except Exception as e:
-        return {"cookies": ""}
 
 def get_video_id_from_url(url: str):
     import re
@@ -131,69 +113,97 @@ def get_video_info_api(url: str):
         return None
 
 def get_video_info(url: str):
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': False,
-        'noplaylist': True,
-        'youtube_include_dash_manifest': False,
-        'source_address': '0.0.0.0',
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Sec-Fetch-Mode': 'navigate',
-        },
-        'extractor_args': {
-            'youtube': ['player_client=android_vr,ios,mweb,web', 'innertube_context_client_name=1']
-        }
-    }
+    config = get_config()
+    proxy = config.get("proxyUrl")
     
-    if os.path.exists("cookies.txt"):
-        ydl_opts['cookiefile'] = "cookies.txt"
+    # Try multiple strategies to bypass bot detection
+    strategies = [
+        # Strategy 1: Modern Multi-Client (Default)
+        {
+            'player_client': 'ios,android,web',
+            'client_name': '1'
+        },
+        # Strategy 2: Mobile Web Focus
+        {
+            'player_client': 'mweb,ios',
+            'client_name': '10'
+        },
+        # Strategy 3: TV Client (Often less bot detection)
+        {
+            'player_client': 'tv,web',
+            'client_name': '3'
+        }
+    ]
 
-    # Try API first for title/thumbnail to bypass basic blocks
     api_info = get_video_info_api(url)
+    last_error = "Unknown error"
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
-            info = ydl.extract_info(url, download=False)
-            formats = []
-            
-            for f in info.get('formats', []):
-                if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
-                    formats.append({
-                        'format_id': f['format_id'],
-                        'ext': f['ext'],
-                        'resolution': f.get('resolution', 'N/A'),
-                        'filesize': f.get('filesize', 0) or f.get('filesize_approx', 0),
-                        'type': 'video'
-                    })
-                elif f.get('vcodec') == 'none' and f.get('acodec') != 'none':
-                    formats.append({
-                        'format_id': f['format_id'],
-                        'ext': f['ext'],
-                        'resolution': 'Audio Only',
-                        'filesize': f.get('filesize', 0) or f.get('filesize_approx', 0),
-                        'type': 'audio'
-                    })
-            
-            unique_formats = {f['resolution']: f for f in formats}.values()
-            
-            return {
-                "title": info.get('title') or (api_info['title'] if api_info else "Video"),
-                "thumbnail": info.get('thumbnail') or (api_info['thumbnail'] if api_info else ""),
-                "duration": info.get('duration'),
-                "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
+    for strategy in strategies:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'noplaylist': True,
+            'youtube_include_dash_manifest': True,
+            'source_address': '0.0.0.0',
+            'nocheckcertificate': True,
+            'geo_bypass': True,
+            'force_ipv4': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            },
+            'extractor_args': {
+                'youtube': [
+                    f"player_client={strategy['player_client']}",
+                    f"innertube_context_client_name={strategy['client_name']}"
+                ]
             }
+        }
+        
+        if proxy:
+            ydl_opts['proxy'] = proxy
+        
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                formats = []
+                
+                for f in info.get('formats', []):
+                    if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                        formats.append({
+                            'format_id': f['format_id'],
+                            'ext': f['ext'],
+                            'resolution': f.get('resolution', 'N/A'),
+                            'filesize': f.get('filesize', 0) or f.get('filesize_approx', 0),
+                            'type': 'video'
+                        })
+                    elif f.get('vcodec') == 'none' and f.get('acodec') != 'none':
+                        formats.append({
+                            'format_id': f['format_id'],
+                            'ext': f['ext'],
+                            'resolution': 'Audio Only',
+                            'filesize': f.get('filesize', 0) or f.get('filesize_approx', 0),
+                            'type': 'audio'
+                        })
+                
+                unique_formats = {f['resolution']: f for f in formats}.values()
+                
+                return {
+                    "title": info.get('title') or (api_info['title'] if api_info else "Video"),
+                    "thumbnail": info.get('thumbnail') or (api_info['thumbnail'] if api_info else ""),
+                    "duration": info.get('duration'),
+                    "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
+                }
         except Exception as e:
-            # If yt-dlp fails but we have API info, we can at least show the video exists
-            # but we can't download without yt-dlp working.
-            if api_info:
-                 raise HTTPException(status_code=400, detail=f"Metadata fetched via API, but streaming links are blocked: {str(e)}")
-            raise HTTPException(status_code=400, detail=str(e))
+            last_error = str(e)
+            print(f"Strategy with {strategy['player_client']} failed: {e}")
+            continue # Try next strategy
+
+    # All strategies failed
+    if api_info:
+         raise HTTPException(status_code=400, detail=f"Metadata fetched via API, but streaming links are blocked: {last_error}")
+    raise HTTPException(status_code=400, detail=last_error)
 
 @app.post("/api/info")
 def fetch_info(req: VideoRequest):
@@ -228,24 +238,28 @@ def search_videos(req: SearchRequest):
 
 @app.get("/api/download")
 async def download_video(url: str, format_id: str):
+    config = get_config()
+    proxy = config.get("proxyUrl")
+    
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'youtube_include_dash_manifest': False, # Prefer direct progressive links
-        'source_address': '0.0.0.0', # Force IPv4 which sometimes helps with YouTube IP blocklists
+        'youtube_include_dash_manifest': True,
+        'source_address': '0.0.0.0',
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'force_ipv4': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         },
         'extractor_args': {
-            'youtube': ['player_client=android_vr,ios,mweb,web', 'innertube_context_client_name=1']
+            'youtube': ['player_client=ios,android,web', 'innertube_context_client_name=1']
         }
     }
     
-    if os.path.exists("cookies.txt"):
-        ydl_opts['cookiefile'] = "cookies.txt"
+    if proxy:
+        ydl_opts['proxy'] = proxy
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -269,7 +283,11 @@ async def download_video(url: str, format_id: str):
             # Stream directly using proxy to bypass IP blocks (403 Forbidden). 
             # We use a small 64KB chunk size to prevent memory overload on Railway.
             async def proxy_stream():
-                async with httpx.AsyncClient(timeout=None) as client:
+                client_opts = {"timeout": None}
+                if proxy:
+                    client_opts["proxy"] = proxy
+                
+                async with httpx.AsyncClient(**client_opts) as client:
                     async with client.stream("GET", video_url, headers={"User-Agent": "Mozilla/5.0"}) as response:
                         if response.status_code != 200:
                             yield b"Error fetching stream. YouTube might be blocking the server."
