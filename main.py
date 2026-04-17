@@ -82,10 +82,9 @@ def fetch_info(req: VideoRequest):
 
 @app.get("/api/download")
 async def download_video(url: str, format_id: str):
-    # Streaming massive files via the proxy consumes all Railway memory 
-    # for long videos and causes memory crash.
-    # Passing the exact URL to the client is the single robust way 
-    # to handle video data.
+    # Instead of proxying a massive stream which can crash Railway's tight memory limits 
+    # and fail midway, we will return the absolute direct googlevideo URL to the client JSON.
+    # The frontend will trigger the download safely.
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -107,10 +106,8 @@ async def download_video(url: str, format_id: str):
                 
             video_url = target_format['url']
             
-            # 302 Redirect the backend endpoint directly to the googlevideo URL payload.
-            # This causes the browser to naturally interpret the file as a target destination
-            # and mobile phones deal with `videoplayback` URLs securely.
-            return RedirectResponse(url=video_url, status_code=302)
+            # Return the direct URL so frontend can create the download link
+            return {"download_url": video_url}
             
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
