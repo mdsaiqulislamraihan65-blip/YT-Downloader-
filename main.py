@@ -7,6 +7,8 @@ from pydantic import BaseModel
 import yt_dlp
 import asyncio
 import os
+import httpx
+from urllib.parse import quote
 from io import BytesIO
 
 app = FastAPI(title="YouTube Downloader API")
@@ -34,6 +36,11 @@ def get_video_info(url: str):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
         }
     }
+    
+    # Enable cookie usage if the user uploaded cookies.txt to bypass YouTube bot protection
+    if os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = "cookies.txt"
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
@@ -74,26 +81,37 @@ def fetch_info(req: VideoRequest):
     return get_video_info(req.url)
 
 @app.get("/api/download")
-def download_video(url: str, format_id: str):
-    # This is a basic implementation for downloading.
-    # In a production environment on Railway, you'd stream directly or save to a temp folder.
+async def download_video(url: str, format_id: str):
+    # Instead of proxying a massive stream which can crash Railway's tight memory limits 
+    # and fail midway, we will return the absolute direct googlevideo URL.
+    # Note: Modern YouTube direct URLs will automatically download if clicked.
     ydl_opts = {
-        'format': format_id,
         'quiet': True,
-        'outtmpl': '-',
-        'logtostderr': True
+        'no_warnings': True,
+        'noplaylist': True,
     }
     
-    # We would use a subprocess or streaming response here to pipe to the user
-    # Returning redirect to the actual URL works best for some formats without consuming server bandwidth
+    if os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = "cookies.txt"
     
-    with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-        info = ydl.extract_info(url, download=False)
-        for f in info['formats']:
-            if f['format_id'] == format_id:
-                return {"download_url": f['url']}
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            target_format = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
+            
+            if not target_format:
+                raise HTTPException(status_code=400, detail="Format not found")
                 
-    raise HTTPException(status_code=400, detail="Format not found")
+            video_url = target_format['url']
+            
+            # Since Railway might fail proxying a 2GB file, 
+            # returning the direct URL to the client is safer.
+            # The client browser will download directly from YouTube.
+            return {"download_url": video_url}
+            
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # Serve React static files if they exist
 if os.path.isdir("static"):

@@ -105,7 +105,17 @@ export default function App() {
     try {
       const response = await axios.get(`/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`);
       if (response.data.download_url) {
-        window.open(response.data.download_url, '_blank');
+        // Create an invisible link to attempt forced download
+        const link = document.createElement('a');
+        link.href = response.data.download_url;
+        // Setting target to _blank opens the google video URL which 
+        // will naturally stream/download on mobile
+        link.target = '_blank'; 
+        link.dataset.downloadurl = ['video/mp4', 'download', response.data.download_url].join(':');
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
       }
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to download format.");
