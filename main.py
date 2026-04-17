@@ -33,14 +33,12 @@ def get_video_info(url: str):
         'noplaylist': True,
         'youtube_include_dash_manifest': False,
         'source_address': '0.0.0.0',
-        'geo_bypass': True,
+        # Sometimes setting a generic header helps slightly with rate limits
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
         },
         'extractor_args': {
-            'youtube': ['player_skip=webpage,configs', 'client=ios,tv,android']
+            'youtube': ['client=android']
         }
     }
     
@@ -81,43 +79,7 @@ def get_video_info(url: str):
                 "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
             }
         except Exception as e:
-            yt_error = str(e)
-            
-            # Fallback to PyTubeFix which uses PO_TOKEN bypassing if yt-dlp fails!
-            try:
-                from pytubefix import YouTube
-                yt = YouTube(url, use_po_token=True)
-                formats = []
-                
-                for stream in yt.streams:
-                    if not stream.itag: continue
-                    is_video = stream.includes_video_track
-                    is_audio = stream.includes_audio_track
-                    
-                    # Only grab streams that are either combined (video+audio) or purely audio.
-                    if is_video and not is_audio:
-                        continue # Skip video-only streams without audio unless doing muxing
-                        
-                    res = stream.resolution if is_video else 'Audio Only'
-                    
-                    formats.append({
-                        'format_id': str(stream.itag),
-                        'ext': stream.subtype or 'mp4',
-                        'resolution': res,
-                        'filesize': stream.filesize_mb * 1024 * 1024 if hasattr(stream, 'filesize_mb') else 0,
-                        'type': 'video' if is_video else 'audio'
-                    })
-                    
-                unique_formats = {f['resolution']: f for f in formats}.values()
-                
-                return {
-                    "title": yt.title,
-                    "thumbnail": yt.thumbnail_url,
-                    "duration": yt.length,
-                    "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
-                }
-            except Exception as backup_e:
-                raise HTTPException(status_code=400, detail=f"YT-DLP Error: {yt_error} | PyTubeFix Fallback Error: {str(backup_e)}")
+            raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/info")
 def fetch_info(req: VideoRequest):
@@ -131,12 +93,8 @@ async def download_video(url: str, format_id: str):
         'noplaylist': True,
         'youtube_include_dash_manifest': False, # Prefer direct progressive links
         'source_address': '0.0.0.0', # Force IPv4 which sometimes helps with YouTube IP blocklists
-        'geo_bypass': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
-        },
         'extractor_args': {
-            'youtube': ['player_skip=webpage,configs', 'client=ios,tv,android'] # Mask server completely to avoid bot pages
+            'youtube': ['client=android'] # Mask server as android bot
         }
     }
     
@@ -145,29 +103,17 @@ async def download_video(url: str, format_id: str):
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-                target_format = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
-                if not target_format:
-                    raise Exception("Format not found in yt-dlp")
-                    
-                video_url = target_format['url']
-                ext = target_format.get('ext', 'mp4')
-                title = info.get('title', 'Video')
-                filesize = target_format.get('filesize') or target_format.get('filesize_approx')
-            except Exception as ydl_e:
-                # Fallback to PyTubeFix if yt-dlp is blocked
-                from pytubefix import YouTube
-                yt = YouTube(url, use_po_token=True)
-                stream = yt.streams.get_by_itag(int(format_id))
-                if not stream:
-                    raise Exception(f"YT-DLP Error: {str(ydl_e)} | PyTubeFix Error: Format not found")
+            info = ydl.extract_info(url, download=False)
+            
+            target_format = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
+            
+            if not target_format:
+                raise HTTPException(status_code=400, detail="Format not found")
                 
-                video_url = stream.url
-                ext = stream.subtype or 'mp4'
-                title = yt.title or 'Video'
-                filesize = stream.filesize_mb * 1024 * 1024 if hasattr(stream, 'filesize_mb') else None
-                
+            video_url = target_format['url']
+            ext = target_format.get('ext', 'mp4')
+            title = info.get('title', 'Video')
+            
             # Clean title for filename to avoid issues
             safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
             if not safe_title:
@@ -190,8 +136,10 @@ async def download_video(url: str, format_id: str):
                 'Content-Type': 'application/octet-stream',
             }
             
+            # Pass content length so the browser shows an active progress bar like Snaptube!
+            filesize = target_format.get('filesize') or target_format.get('filesize_approx')
             if filesize:
-                headers['Content-Length'] = str(int(filesize))
+                headers['Content-Length'] = str(filesize)
                 
             return StreamingResponse(proxy_stream(), headers=headers)
             
