@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about the authenticated user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier from Firebase Auth." },
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "displayName": { "type": "string", "description": "User's full name." },
+        "photoURL": { "type": "string", "format": "uri", "description": "URL to the user's profile picture." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user first logged in." }
+      },
+      "required": ["uid", "email"]
+    },
+    "SearchHistory": {
+      "title": "Search History",
+      "description": "Logs of YouTube searches performed by the user.",
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "The search query or video URL." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the search was performed." },
+        "type": { "type": "string", "enum": ["search", "url"], "description": "The type of lookup." }
+      },
+      "required": ["query", "timestamp", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile document."
+    },
+    "/users/{userId}/searches/{searchId}": {
+      "schema": "SearchHistory",
+      "description": "User's search and download history."
+    }
+  }
+}

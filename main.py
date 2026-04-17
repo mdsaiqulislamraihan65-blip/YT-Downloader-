@@ -10,8 +10,21 @@ import os
 import httpx
 from urllib.parse import quote
 from io import BytesIO
+from googleapiclient.discovery import build
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(title="YouTube Downloader API")
+
+# Initialize YouTube API client
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+youtube_client = None
+if YOUTUBE_API_KEY:
+    try:
+        youtube_client = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+    except Exception as e:
+        print(f"Error initializing YouTube client: {e}")
 
 # Setup CORS for frontend to communicate
 app.add_middleware(
@@ -25,6 +38,45 @@ app.add_middleware(
 class VideoRequest(BaseModel):
     url: str
 
+class SearchRequest(BaseModel):
+    query: str
+
+def get_video_id_from_url(url: str):
+    import re
+    # Simple regex to get video id
+    regex = r"(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^\"&?\/\s]{11})"
+    match = re.search(regex, url)
+    return match.group(1) if match else None
+
+def get_video_info_api(url: str):
+    video_id = get_video_id_from_url(url)
+    if not youtube_client or not video_id:
+        return None
+    
+    try:
+        request = youtube_client.videos().list(
+            part="snippet,contentDetails",
+            id=video_id
+        )
+        response = request.execute()
+        
+        if not response['items']:
+            return None
+            
+        item = response['items'][0]
+        snippet = item['snippet']
+        
+        # We still need yt-dlp to get the formats/stream URLs
+        # But we can get general info from API if yt-dlp metadata extraction fails
+        return {
+            "title": snippet['title'],
+            "thumbnail": snippet['thumbnails']['high']['url'],
+            "id": video_id
+        }
+    except Exception as e:
+        print(f"API Error: {e}")
+        return None
+
 def get_video_info(url: str):
     ydl_opts = {
         'quiet': True,
@@ -33,7 +85,6 @@ def get_video_info(url: str):
         'noplaylist': True,
         'youtube_include_dash_manifest': False,
         'source_address': '0.0.0.0',
-        # Sometimes setting a generic header helps slightly with rate limits
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
         },
@@ -42,9 +93,11 @@ def get_video_info(url: str):
         }
     }
     
-    # Enable cookie usage if the user uploaded cookies.txt to bypass YouTube bot protection
     if os.path.exists("cookies.txt"):
         ydl_opts['cookiefile'] = "cookies.txt"
+
+    # Try API first for title/thumbnail to bypass basic blocks
+    api_info = get_video_info_api(url)
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
@@ -69,21 +122,50 @@ def get_video_info(url: str):
                         'type': 'audio'
                     })
             
-            # Simple deduplication
             unique_formats = {f['resolution']: f for f in formats}.values()
             
             return {
-                "title": info.get('title'),
-                "thumbnail": info.get('thumbnail'),
+                "title": info.get('title') or (api_info['title'] if api_info else "Video"),
+                "thumbnail": info.get('thumbnail') or (api_info['thumbnail'] if api_info else ""),
                 "duration": info.get('duration'),
                 "formats": sorted(unique_formats, key=lambda x: x.get('filesize', 0), reverse=True)
             }
         except Exception as e:
+            # If yt-dlp fails but we have API info, we can at least show the video exists
+            # but we can't download without yt-dlp working.
+            if api_info:
+                 raise HTTPException(status_code=400, detail=f"Metadata fetched via API, but streaming links are blocked: {str(e)}")
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/info")
 def fetch_info(req: VideoRequest):
     return get_video_info(req.url)
+
+@app.post("/api/search")
+def search_videos(req: SearchRequest):
+    if not youtube_client:
+        raise HTTPException(status_code=400, detail="YouTube API Key not configured. Please add YOUTUBE_API_KEY to environment.")
+    
+    try:
+        request = youtube_client.search().list(
+            part="snippet",
+            maxResults=10,
+            q=req.query,
+            type="video"
+        )
+        response = request.execute()
+        
+        results = []
+        for item in response.get('items', []):
+            results.append({
+                "id": item['id']['videoId'],
+                "title": item['snippet']['title'],
+                "thumbnail": item['snippet']['thumbnails']['high']['url'],
+                "url": f"https://www.youtube.com/watch?v={item['id']['videoId']}"
+            })
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/download")
 async def download_video(url: str, format_id: str):

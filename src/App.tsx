@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle, LogIn, LogOut, History, User as UserIcon } from 'lucide-react';
 import { cn } from './lib/utils';
 import axios from 'axios';
+import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User, setDoc, doc, collection, addDoc, serverTimestamp } from './firebase';
 
 interface VideoFormat {
   format_id: string;
@@ -17,6 +18,13 @@ interface VideoInfo {
   thumbnail: string;
   duration: number;
   formats: VideoFormat[];
+}
+
+interface SearchResult {
+  id: string;
+  title: string;
+  thumbnail: string;
+  url: string;
 }
 
 function formatBytes(bytes: number, decimals = 2) {
@@ -43,55 +51,122 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
-  const fetchInfo = async (e: React.FormEvent) => {
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      setAuthReady(true);
+      if (currentUser) {
+        // Sync user profile to Firestore
+        await setDoc(doc(db, 'users', currentUser.uid), {
+          uid: currentUser.uid,
+          email: currentUser.email,
+          displayName: currentUser.displayName,
+          photoURL: currentUser.photoURL,
+          createdAt: serverTimestamp(),
+        }, { merge: true });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const login = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err: any) {
+      console.error(err);
+      setError("Login failed: " + err.message);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setVideoInfo(null);
+      setSearchResults(null);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const logSearch = async (query: string, type: 'search' | 'url') => {
+    if (user) {
+      try {
+        await addDoc(collection(db, 'users', user.uid, 'searches'), {
+          query,
+          type,
+          timestamp: serverTimestamp(),
+        });
+      } catch (err) {
+        console.error("Failed to log search:", err);
+      }
+    }
+  };
+
+  const fetchInfo = async (targetUrl: string) => {
+    setLoading(true);
+    setError(null);
+    setVideoInfo(null);
+    setSearchResults(null);
+
+    try {
+      const response = await axios.post('/api/info', { url: targetUrl });
+      setVideoInfo(response.data);
+      await logSearch(targetUrl, 'url');
+    } catch (err: any) {
+      console.error(err);
+      if (err.response?.data?.detail) {
+         setError(err.response.data.detail);
+      } else {
+        setError(err.response?.status 
+          ? `Server Error ${err.response.status}: YouTube is blocking this lookup.` 
+          : `Network Error: ${err.message}`);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
+
+    if (url.includes('youtube.com/') || url.includes('youtu.be/')) {
+        await fetchInfo(url);
+        return;
+    }
 
     setLoading(true);
     setError(null);
     setVideoInfo(null);
+    setSearchResults(null);
 
     try {
-      // Trying to hit the FastAPI backend
-      const response = await axios.post('/api/info', { url });
-      setVideoInfo(response.data);
+      const response = await axios.post('/api/search', { query: url });
+      setSearchResults(response.data);
+      await logSearch(url, 'search');
     } catch (err: any) {
       console.error(err);
-      
-      // If we received an error response from the Python backend (e.g. yt-dlp error)
-      if (err.response?.data?.detail) {
-         setError(err.response.data.detail);
-         setLoading(false);
-         return;
-      }
-      
-      // For ALL other errors (Network Error, 502 Bad Gateway, 500 Internal Server Error)
-      // just display the raw error so we know EXACTLY what's wrong on Railway.
-      const errorMsg = err.response?.status 
-        ? `Server Error ${err.response.status}: Railway backend crashed or is restarting.` 
-        : `Network Error: ${err.message}. Backend might be offline.`;
-        
-      setError(errorMsg);
+      setError(err.response?.data?.detail || "Search failed. Check your API configuration.");
+    } finally {
       setLoading(false);
-      return;
     }
-    
-    setLoading(false);
   };
 
-  const handleDownload = async (format: VideoFormat) => {
+  const handleDownload = async (format: VideoFormat, targetUrl: string) => {
+    if (!user) {
+      setError("Please login to download videos.");
+      return;
+    }
     setDownloadingFormat(format.format_id);
-
-    // Because the backend sets Content-Disposition: attachment, 
-    // creating a hidden anchor tag with the download attribute triggers the phone's Download Manager
-    // without actually leaving the website or opening a weird page! (Like Snaptube)
-    const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
+    const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&format_id=${format.format_id}`;
     
     const a = document.createElement('a');
     a.href = downloadUrl;
-    // The download attribute is the absolute key to forcing standard browser downloads
     a.download = `download_${format.resolution}.${format.ext}`; 
     document.body.appendChild(a);
     a.click();
@@ -102,91 +177,177 @@ export default function App() {
     }, 2500);
   };
 
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
+        <Loader2 className="w-12 h-12 text-[#FF3D00] animate-spin" />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#050505] text-white flex flex-col items-center py-16 px-4 font-sans selection:bg-[#FF3D00]/30 relative overflow-hidden">
+    <div className="min-h-screen bg-[#050505] text-white flex flex-col items-center py-12 px-4 font-sans selection:bg-[#FF3D00]/30 relative overflow-hidden">
       
+      {/* Auth Bar */}
+      <div className="absolute top-6 right-6 z-50">
+        {user ? (
+          <div className="flex items-center gap-4 bg-[#121212] border border-white/10 p-2 pl-4 rounded-full shadow-lg backdrop-blur-md">
+            <span className="text-sm font-medium text-white/80 hidden sm:inline">Hello, {user.displayName?.split(' ')[0]}</span>
+            {user.photoURL ? (
+              <img src={user.photoURL} alt="User" className="w-8 h-8 rounded-full border border-white/20" />
+            ) : (
+              <UserIcon className="w-8 h-8 p-1.5 rounded-full bg-white/10 text-white/50" />
+            )}
+            <button 
+              onClick={logout}
+              className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/60 hover:text-white"
+              title="Logout"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        ) : (
+          <button 
+            onClick={login}
+            className="flex items-center gap-2 bg-[#FF3D00] hover:bg-[#FF3D00]/90 text-white font-bold py-2 px-5 rounded-full shadow-[0_0_20px_rgba(255,61,0,0.3)] transition-all active:scale-95"
+          >
+            <LogIn className="w-4 h-4" />
+            <span>Login with Google</span>
+          </button>
+        )}
+      </div>
+
       {/* Background gradients */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[radial-gradient(circle,rgba(255,61,0,0.1)_0%,transparent_70%)] rounded-full" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[radial-gradient(circle,rgba(255,61,0,0.05)_0%,transparent_70%)] rounded-full" />
       </div>
 
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-4xl z-10 space-y-12"
+        className="w-full max-w-4xl z-10 space-y-10"
       >
         {/* Header */}
-        <div className="text-center space-y-4">
+        <div className="text-center space-y-4 pt-12">
           <motion.div 
             initial={{ scale: 0.9 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", bounce: 0.5 }}
-            className="inline-flex items-center justify-center p-3 rounded-2xl bg-[#121212] border border-white/10 mb-4 shadow-[0_0_20px_rgba(255,61,0,0.1)]"
+            className="inline-flex items-center justify-center p-4 rounded-2xl bg-[#121212] border border-white/10 mb-2 shadow-[0_0_30px_rgba(255,61,0,0.15)] cursor-pointer"
+            onClick={() => {
+              setVideoInfo(null);
+              setSearchResults(null);
+              setUrl('');
+              setError(null);
+            }}
           >
-            <Youtube className="w-10 h-10 text-[#FF3D00]" />
+            <Youtube className="w-12 h-12 text-[#FF3D00]" />
           </motion.div>
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight">
             YT Downloader <span className="text-[#FF3D00]">Pro</span>
           </h1>
           <p className="text-white/60 text-lg max-w-xl mx-auto font-medium">
-            Download your favorite videos in ultra-high quality. 
-            Powered by Python FastAPI.
+            Personalized high-quality video downloads.
+            <br />
+            <span className="text-[14px] opacity-70">Powered by Firebase & Google API</span>
           </p>
         </div>
 
-        {/* Input form */}
-        <form onSubmit={fetchInfo} className="relative w-full max-w-[800px] mx-auto">
-          <div className="relative flex items-center bg-[#121212] border border-white/10 rounded-xl overflow-hidden focus-within:border-white/20 transition-colors">
-            <div className="pl-6 pr-3 text-white/60">
-              <Search className="w-5 h-5" />
-            </div>
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="Paste YouTube video URL here..."
-              className="w-full h-[64px] bg-transparent pb-0 pr-[140px] text-white outline-none placeholder:text-white/60 font-medium disabled:opacity-50 text-[16px]"
-              disabled={loading}
-              required
-            />
-            <button
-              type="submit"
-              disabled={loading}
-              className="absolute right-2 top-2 h-[48px] bg-[#FF3D00] hover:bg-[#FF3D00]/90 text-white font-bold rounded-lg px-6 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 uppercase text-[13px] tracking-[0.5px]"
-            >
-              {loading ? (
-                <>
+        {/* Search Bar */}
+        <div className="space-y-4">
+          <form onSubmit={handleSearch} className="relative w-full max-w-[800px] mx-auto group">
+            <div className={cn(
+               "relative flex items-center bg-[#121212] border rounded-2xl overflow-hidden transition-all duration-300 shadow-xl",
+               loading ? "border-[#FF3D00]/50" : "border-white/10 focus-within:border-[#FF3D00]/40 focus-within:ring-1 focus-within:ring-[#FF3D00]/20"
+            )}>
+              <div className="pl-6 pr-3 text-white/40">
+                <Search className="w-5 h-5 group-focus-within:text-[#FF3D00] transition-colors" />
+              </div>
+              <input
+                type="text"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="Search or paste link..."
+                className="w-full h-[72px] bg-transparent pb-0 pr-[140px] text-white outline-none placeholder:text-white/40 font-medium disabled:opacity-50 text-[18px]"
+                disabled={loading}
+                required
+              />
+              <button
+                type="submit"
+                disabled={loading}
+                className="absolute right-3 top-3 bottom-3 bg-[#FF3D00] hover:bg-[#FF3D00]/90 text-white font-bold rounded-xl px-8 transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-2 uppercase text-[14px] tracking-[1px]"
+              >
+                {loading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Fetching</span>
-                </>
-              ) : (
-                <span>Analyze Link</span>
-              )}
-            </button>
-          </div>
-        </form>
+                ) : (
+                  <span>Go</span>
+                )}
+              </button>
+            </div>
+          </form>
+          
+          {!user && !loading && (
+             <p className="text-center text-[12px] text-white/40 animate-pulse">
+                Connect your account to enable history and downloads
+             </p>
+          )}
+        </div>
 
         {error && (
           <motion.div 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            className="bg-red-500/10 border border-red-500/20 text-red-200/80 rounded-xl p-4 flex items-start gap-3 backdrop-blur-sm mx-auto w-full max-w-[800px]"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-[#C41E3A]/10 border border-[#C41E3A]/30 text-red-200/90 rounded-xl p-5 flex items-start gap-4 backdrop-blur-md mx-auto w-full max-w-[800px]"
           >
-            <AlertCircle className="w-5 h-5 mt-0.5 shrink-0 text-red-500" />
-            <div className="text-sm break-words overflow-hidden text-left w-full">
-              <strong className="text-red-500 block mb-1">Backend Error:</strong> 
-              <span className="opacity-90">{error}</span>
-              {(error.includes("Sign in") || error.includes("bot") || error.includes("unavailable")) && (
-                <div className="mt-3 p-3 bg-black/40 rounded-lg text-white/80 border border-white/5">
-                  <strong className="text-yellow-500">Notice:</strong> YouTube blocks Cloud/VPS IP addresses (like Railway). To fix this on your live server, you need to configure <code className="bg-black/50 px-1 py-0.5 rounded text-yellow-300">yt-dlp</code> with cookies or an IP rotation.
-                </div>
-              )}
+            <AlertCircle className="w-6 h-6 shrink-0 text-[#C41E3A]" />
+            <div className="text-[14px] leading-relaxed">
+              <strong className="text-[#C41E3A] block mb-1">Attention:</strong> 
+              {error}
             </div>
           </motion.div>
         )}
 
-        {/* Results */}
+        {/* Results Container */}
         <AnimatePresence mode="wait">
+          {searchResults && (
+            <motion.div
+              layout
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="grid gap-4 w-full max-w-[800px] mx-auto"
+            >
+              <h3 className="text-white/60 text-sm font-semibold uppercase tracking-wider pl-1 underline decoration-[#FF3D00] underline-offset-8 decoration-2">Search Results</h3>
+              <div className="grid sm:grid-cols-2 gap-4">
+                {searchResults.map((result) => (
+                  <motion.div
+                    key={result.id}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                        setUrl(result.url);
+                        fetchInfo(result.url);
+                    }}
+                    className="bg-[#121212] border border-white/10 rounded-xl overflow-hidden cursor-pointer hover:border-white/20 transition-all flex flex-col group"
+                  >
+                    <div className="aspect-video relative overflow-hidden bg-black/20">
+                      <img src={result.thumbnail} alt={result.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                      <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                         <Download className="w-8 h-8 text-white" />
+                      </div>
+                    </div>
+                    <div className="p-4">
+                      <h4 className="font-semibold text-[14px] line-clamp-2 leading-tight h-[2.5rem] group-hover:text-[#FF3D00] transition-colors">
+                        {result.title}
+                      </h4>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
           {videoInfo && (
             <motion.div
               layout
@@ -206,9 +367,11 @@ export default function App() {
                     className="w-full h-full object-cover opacity-80 transition-transform duration-500 group-hover:scale-105 group-hover:opacity-100"
                     referrerPolicy="no-referrer"
                   />
-                  <div className="absolute bottom-3 right-3 bg-black/80 px-2 py-1 rounded text-xs font-semibold text-white">
-                    {formatDuration(videoInfo.duration)}
-                  </div>
+                  {videoInfo.duration > 0 && (
+                    <div className="absolute bottom-3 right-3 bg-black/80 px-2 py-1 rounded text-xs font-semibold text-white">
+                      {formatDuration(videoInfo.duration)}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <h2 className="text-[20px] font-semibold leading-snug mb-2">
@@ -238,6 +401,7 @@ export default function App() {
                             ? "bg-[#FF3D00]/5 border border-[#FF3D00]" 
                             : "bg-white/[0.03] border border-white/10 hover:bg-white/[0.06]"
                         )}
+                        onClick={() => handleDownload(format, url)}
                       >
                         <div className="flex items-center gap-3">
                           <div className={cn(
@@ -254,23 +418,20 @@ export default function App() {
                           </div>
                         </div>
                         
-                        <button
-                          onClick={() => handleDownload(format)}
-                          disabled={downloadingFormat === format.format_id}
+                        <div
                           className={cn(
                             "w-10 h-10 rounded-lg flex items-center justify-center transition-colors disabled:opacity-50",
                             downloadingFormat === format.format_id 
                               ? "text-[#FF3D00]" 
-                              : "text-white/60 hover:text-white hover:bg-white/10"
+                              : "text-white/60 hover:text-white"
                           )}
-                          title="Download"
                         >
                           {downloadingFormat === format.format_id ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
                           ) : (
                             <Download className="w-4 h-4" />
                           )}
-                        </button>
+                        </div>
                       </motion.div>
                     ))}
                   </div>
