@@ -57,11 +57,17 @@ export default function App() {
 
     try {
       // Trying to hit the FastAPI backend
-      // Note: In development mode (AI Studio preview), the Python backend is not running, 
-      // so it will fail and we will fallback to mock data.
       const response = await axios.post('/api/info', { url });
       setVideoInfo(response.data);
-    } catch (err) {
+    } catch (err: any) {
+      // If we received an error response from the Python backend (e.g. yt-dlp error)
+      if (err.response?.data?.detail) {
+         setError(err.response.data.detail);
+         setLoading(false);
+         return;
+      }
+      
+      // If the backend isn't reachable at all (e.g. AI Studio preview environment)
       console.warn("Backend not available, using demo data for UI presentation.");
       setIsDemo(true);
       // Mock data for UI preview in AI Studio
@@ -101,8 +107,8 @@ export default function App() {
       if (response.data.download_url) {
         window.open(response.data.download_url, '_blank');
       }
-    } catch (err) {
-      alert("Failed to download format.");
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Failed to download format.");
     } finally {
       setDownloadingFormat(null);
     }
@@ -171,6 +177,25 @@ export default function App() {
             </button>
           </div>
         </form>
+
+        {error && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="bg-red-500/10 border border-red-500/20 text-red-200/80 rounded-xl p-4 flex items-start gap-3 backdrop-blur-sm mx-auto w-full max-w-[800px]"
+          >
+            <AlertCircle className="w-5 h-5 mt-0.5 shrink-0 text-red-500" />
+            <div className="text-sm break-words overflow-hidden text-left w-full">
+              <strong className="text-red-500 block mb-1">Backend Error:</strong> 
+              <span className="opacity-90">{error}</span>
+              {(error.includes("Sign in") || error.includes("bot") || error.includes("unavailable")) && (
+                <div className="mt-3 p-3 bg-black/40 rounded-lg text-white/80 border border-white/5">
+                  <strong className="text-yellow-500">Notice:</strong> YouTube blocks Cloud/VPS IP addresses (like Railway). To fix this on your live server, you need to configure <code className="bg-black/50 px-1 py-0.5 rounded text-yellow-300">yt-dlp</code> with cookies or an IP rotation.
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
 
         {isDemo && (
           <motion.div 
