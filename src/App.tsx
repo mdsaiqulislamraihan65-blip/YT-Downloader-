@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Youtube, Search, Download, Loader2, Video, Music, CheckCircle2, AlertCircle } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -45,50 +45,64 @@ export default function App() {
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
 
-  const fetchInfo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url.trim()) return;
-
+  // Core analysis function that can be called manually or automatically
+  const performAnalysis = async (targetUrl: string) => {
+    if (!targetUrl.trim()) return;
+    
+    setUrl(targetUrl); // Ensure input box stays synced
     setLoading(true);
     setError(null);
     setVideoInfo(null);
 
     try {
-      // Trying to hit the FastAPI backend
-      const response = await axios.post('/api/info', { url });
+      const response = await axios.post('/api/info', { url: targetUrl });
       setVideoInfo(response.data);
     } catch (err: any) {
       console.error(err);
-      
-      // If we received an error response from the Python backend (e.g. yt-dlp error)
       if (err.response?.data?.detail) {
          setError(err.response.data.detail);
-         setLoading(false);
-         return;
+      } else {
+         const errorMsg = err.response?.status 
+          ? `Server Error ${err.response.status}: Railway backend crashed or is restarting.` 
+          : `Network Error: ${err.message}. Backend might be offline.`;
+         setError(errorMsg);
       }
-      
-      // For ALL other errors (Network Error, 502 Bad Gateway, 500 Internal Server Error)
-      // just display the raw error so we know EXACTLY what's wrong on Railway.
-      const errorMsg = err.response?.status 
-        ? `Server Error ${err.response.status}: Railway backend crashed or is restarting.` 
-        : `Network Error: ${err.message}. Backend might be offline.`;
-        
-      setError(errorMsg);
+    } finally {
       setLoading(false);
-      return;
     }
-    
-    setLoading(false);
   };
+
+  const fetchInfo = (e: React.FormEvent) => {
+    e.preventDefault();
+    performAnalysis(url);
+  };
+
+  // Run once on load to catch auto-URLs from window.location
+  useEffect(() => {
+    // If user accesses site via: website.com/https://youtube.com/watch?v=...
+    // The pathname will be "/https://youtube.com/watch" and search will be "?v=..."
+    const initialUrl = (window.location.pathname.slice(1) + window.location.search).trim();
+    
+    if (initialUrl.startsWith('http') && (initialUrl.includes('youtube.com') || initialUrl.includes('youtu.be'))) {
+       performAnalysis(initialUrl);
+    }
+  }, []);
 
   const handleDownload = async (format: VideoFormat) => {
     setDownloadingFormat(format.format_id);
 
     // Because the backend sets Content-Disposition: attachment, 
-    // replacing the window location natively triggers the phone's Download Manager
+    // creating a hidden anchor tag with the download attribute triggers the phone's Download Manager
     // without actually leaving the website or opening a weird page! (Like Snaptube)
     const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_id=${format.format_id}`;
-    window.location.href = downloadUrl;
+    
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    // The download attribute is the absolute key to forcing standard browser downloads
+    a.download = `download_${format.resolution}.${format.ext}`; 
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 
     setTimeout(() => {
        setDownloadingFormat(null);
